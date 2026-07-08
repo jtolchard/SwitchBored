@@ -1,0 +1,8 @@
+# SwitchBored dependencies
+rumps>=0.4
+ping3>=4.0
+Pillow>=10.0
+customtkinter>=5.2
+requests>=2.31
+# Foundation / NSBundle access for the menu-bar name
+pyobjc-framework-Cocoa>=10.0
