@@ -7,6 +7,16 @@ and gets you onto them fast — SSH, SFTP, tmux, or VNC in one click. A separate
 dashboard window gives you live status, per-machine details, and (optionally)
 remote service control and log viewing over SSH.
 
+<p align="center">
+  <img src="docs/screenshots/dashboard.png" width="680"
+       alt="SwitchBored dashboard — live machine status with one-click SSH, TMUX, SFTP, and VNC">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/menubar.png" width="480"
+       alt="SwitchBored menu bar — Quick Connect submenu with live status dots">
+</p>
+
 ## Features
 
 - **Menu bar quick-connect** — every machine gets a submenu with its enabled
