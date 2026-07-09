@@ -7,16 +7,6 @@ and gets you onto them fast — SSH, SFTP, tmux, or VNC in one click. A separate
 dashboard window gives you live status, per-machine details, and (optionally)
 remote service control and log viewing over SSH.
 
-<p align="center">
-  <img src="docs/screenshots/dashboard.png" width="680"
-       alt="SwitchBored dashboard — live machine status with one-click SSH, TMUX, SFTP, and VNC">
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/menubar.png" width="480"
-       alt="SwitchBored menu bar — Quick Connect submenu with live status dots">
-</p>
-
 ## Features
 
 - **Menu bar quick-connect** — every machine gets a submenu with its enabled
@@ -37,6 +27,13 @@ remote service control and log viewing over SSH.
 - **Custom menu links** — pin up to three web links to the menu bar menu.
 - **Plugins** — drop a Python file into `plugins/` to add your own menu items
   and background monitors (see [Writing plugins](#writing-plugins)).
+
+<p align="center">
+  <img src="docs/screenshots/hero.png"
+       alt="SwitchBored — the dashboard with live machine status and one-click connections, and the menu bar Quick Connect submenu">
+  <br>
+  <em>The dashboard — live status, group filtering, and one-click connections — and Quick Connect from the menu bar.</em>
+</p>
 
 ## Requirements
 
