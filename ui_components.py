@@ -8,6 +8,69 @@ import tkinter.font as tkfont
 from tkinter import filedialog, messagebox
 import tkinter as tk
 
+def enable_trackpad_scrolling(root):
+    """Make trackpad scrolling work in customtkinter scrollables under Tk 9.
+
+    Tk 9 delivers macOS trackpad gestures as <TouchpadScroll> events, which
+    customtkinter (≤6.0) never binds — it only handles <MouseWheel> — so
+    every CTkScrollableFrame is inert on trackpads. This routes the event to
+    the scrollable frame under the pointer. Widgets whose Tk class already
+    handles <TouchpadScroll> natively (Text, Listbox) are left alone to
+    avoid double scrolling. On Tk 8.x the event type doesn't exist and this
+    is a no-op; <MouseWheel> works there as before.
+    """
+    def find_scrollable_frame(widget):
+        w = widget
+        while w is not None:
+            if isinstance(w, ctk.CTkScrollableFrame):
+                return w
+            w = getattr(w, "master", None)
+        return None
+
+    def on_touchpad(event):
+        target = root.winfo_containing(event.x_root, event.y_root)
+        if target is None:
+            return
+
+        try:
+            if root.bind_class(target.winfo_class(), "<TouchpadScroll>"):
+                return  # handled natively by Tk
+        except tk.TclError:
+            pass
+
+        frame = find_scrollable_frame(target)
+        if frame is None:
+            return
+        canvas = frame._parent_canvas
+
+        # %D packs precise per-axis pixel deltas; Tk provides the decoder.
+        try:
+            dx, dy = (int(v) for v in root.tk.call("::tk::PreciseScrollDeltas", event.delta))
+        except (tk.TclError, ValueError, TypeError):
+            dx, dy = 0, int(event.delta)
+
+        # Canvas units are 8px (y) / 4px (x) on macOS, so this tracks the
+        # gesture roughly 1:1; tiny momentum deltas still move one unit.
+        def units(value, px_per_unit):
+            steps = int(value / px_per_unit)
+            if steps == 0 and value:
+                steps = 1 if value > 0 else -1
+            return steps
+
+        try:
+            if dy:
+                canvas.yview("scroll", -units(dy, 8), "units")
+            elif dx:
+                canvas.xview("scroll", -units(dx, 4), "units")
+        except tk.TclError:
+            pass
+
+    try:
+        root.bind_all("<TouchpadScroll>", on_touchpad, add=True)
+    except tk.TclError:
+        pass
+
+
 class ToolTip:
     """Simple hover tooltip for Tkinter or CustomTkinter widgets."""
 
@@ -76,7 +139,8 @@ class EmojiPicker(ctk.CTkToplevel):
         emojis = [
             # Tech & Devices
             "💻", "🖥️", "🛡️", "⚙️", "📡", "🚀", "💾", "🔌", "🔒", "🔑", "📊", "☁️", 
-            "📱", "⌚", "🖨️", "🖱️", "🔋", "💽", "🌐", "🔍", "🕸️", "🤖","🧲",
+            "📱", "⌚", "🖨️", "🖱️", "🔋", "💽", "🌐", "🔍", "🕸️", "🤖","🧲","🧰","🧬",
+            "🔬","🧪","📉","📈",
             # OS & Brands
             "🐧", "🍎", "🪟", 
             # Status & Indicators

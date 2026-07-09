@@ -10,7 +10,7 @@ from core import MachineManagerCore
 from actions import ActionManager
 from console.bootstrap import spawn_self
 from version import APP_NAME
-from ui_components import ToolTip
+from ui_components import ToolTip, enable_trackpad_scrolling
 from .debug_console import DebugConsoleMixin
 from .machine_details import MachineDetailsWindow
 from .settings_window import SettingsWindow
@@ -46,6 +46,9 @@ class RemoteManagerDash(DebugConsoleMixin, ctk.CTk):
         self.attributes("-alpha", 0)
         self.title("Dashboard")
         self._setup_app_menu()
+        # bind_all covers every toplevel in this process (settings, editor,
+        # details, viewers), so one call here is enough.
+        enable_trackpad_scrolling(self)
         
         self.geometry(
             f"{DASHBOARD_LAYOUT['default_width']}x{DASHBOARD_LAYOUT['initial_height']}+"
