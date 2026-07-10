@@ -27,8 +27,6 @@ and versions follow `MAJOR.MINOR.PATCH`.
 - Better caught the problem of launching the app while it's already running.
   A notice is now shown instead of silently exiting.
 
-Then rebuild (`./build_release.sh`) and you're set — remembering the very lesson this bug taught: quit the running menu-bar SwitchBored before launching the new build to test it. 🙂
-
 ## [1.3.1] - 2026-07-09
 
 ### Fixed
