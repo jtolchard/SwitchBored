@@ -1,11 +1,29 @@
 import os
 import sys
+import subprocess
 
 def app_support_path(filename: str) -> str:
     """Return the path to a file in the SwitchBored Application Support directory."""
     base = os.path.expanduser("~/Library/Application Support/SwitchBored")
     os.makedirs(base, exist_ok=True)
     return os.path.join(base, filename)
+
+def _notify_already_running():
+    """Show a visible notice that another instance owns the lock.
+
+    When launched from Finder there is no terminal to print to, and a
+    menu-bar app has no window — without this, declining to start looks
+    exactly like a crash.
+    """
+    script = (
+        'display alert "SwitchBored is already running" '
+        'message "Look for its icon in the menu bar." '
+        'as informational giving up after 30'
+    )
+    try:
+        subprocess.Popen(["osascript", "-e", script])
+    except Exception:
+        pass
 
 def acquire_console_lock():
     """Ensure only one SwitchBored console instance is running."""
@@ -28,6 +46,7 @@ def acquire_console_lock():
             os.system(f"osascript -e '{script}' > /dev/null 2>&1")
 
             print("SwitchBored is already running.")
+            _notify_already_running()
             sys.exit(0)
 
         except (ProcessLookupError, ValueError, OSError):
