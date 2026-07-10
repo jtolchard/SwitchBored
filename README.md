@@ -89,7 +89,8 @@ the release notes. When you're running the bundled app, updates download and
 install in place — the app swaps itself for the new version and relaunches.
 Your settings and installed plugins are untouched, because they live outside
 the bundle (see below). When running from source, the update prompt just
-points you at the release page; update with `git pull`.
+points you at the release page; update with `git pull`. A full version
+history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ## Where your data lives
 
@@ -215,16 +216,22 @@ Two environment rules matter:
   requirements, so py2app's dependency scan doesn't try to walk every
   package on your system.
 
+The included [`build_release.sh`](build_release.sh) does the whole thing —
+cleans old artifacts, regenerates the icon, builds in a fresh venv from the
+python.org interpreter, verifies the bundle's minimum macOS, and zips the
+release asset named after the version in `version.py`:
+
+```bash
+./build_release.sh                             # → dist/SwitchBored-<version>.zip
+```
+
+Or manually:
+
 ```bash
 /usr/local/bin/python3.13 -m venv .venv        # python.org's interpreter
 .venv/bin/pip install -r requirements.txt py2app
 .venv/bin/python setup.py py2app               # → dist/SwitchBored.app
-```
-
-Before publishing, confirm the bundle's minimum macOS is what you expect:
-
-```bash
-vtool -show-build dist/SwitchBored.app/Contents/MacOS/python | grep minos
+vtool -show-build dist/SwitchBored.app/Contents/MacOS/python | grep minos   # want 11.0
 ```
 
 The dashboard and About windows are child processes launched by the app
