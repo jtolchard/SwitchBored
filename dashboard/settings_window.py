@@ -11,7 +11,7 @@ from .machine_editor import MachineEditorWindow
 from .dialogs import ConfirmationDialog
 from .ssh_keys import SSHKeyAssistant
 from .ui_helpers import center_window_over_parent, find_ui_root, schedule_on_ui_thread
-from console.updater import fetch_latest_release, parse_version
+from console.updater import fetch_latest_release, parse_version, is_frozen
 from version import VERSION
 
 class SettingsWindow(ctk.CTkToplevel):
@@ -50,12 +50,20 @@ class SettingsWindow(ctk.CTkToplevel):
         self.tabs = ctk.CTkTabview(self, command=self._on_tab_selected)
         self.tabs.pack(fill="both", expand=True, padx=10, pady=0)
 
-        # Give the tab strip visible segment boundaries: a lighter strip
-        # background shows through the 1px gap around each tab button.
-        # (Unselected tabs are gray29 = #4a4a4a, so the strip must be
-        # noticeably lighter than that.)
+        # Style the tab strip as a single grouped control rather than
+        # separate buttons: no per-segment border, a subtly lighter strip
+        # so the group reads as one unit, and unselected tabs flat inside
+        # it. Only the selected tab is accented, which marks the boundary.
         try:
-            self.tabs._segmented_button.configure(border_width=1, fg_color="#5f5f5f")
+            self.tabs._segmented_button.configure(
+                border_width=0,
+                fg_color="#333333",
+                unselected_color="#333333",
+                unselected_hover_color="#3d3d3d",
+                selected_color="#4a4a4a",
+                selected_hover_color="#4a4a4a",
+                text_color="#dddddd",
+            )
         except Exception:
             pass
         self.tab_glob = self.tabs.add("Global Settings")
@@ -372,8 +380,18 @@ class SettingsWindow(ctk.CTkToplevel):
             fg_color="#1e1e1e",
             wrap="word"
         )
-        self.update_notes_box.pack(fill="both", expand=True, padx=20, pady=(5, 20))
+        self.update_notes_box.pack(fill="both", expand=True, padx=20, pady=(5, 10))
         self.update_notes_box.configure(state="disabled")
+
+        # Shown only when an installable update is available (bundled app).
+        # Default blue styling, matching the "Add New Machine" button.
+        self._available_release = None
+        self.update_install_btn = ctk.CTkButton(
+            self.tab_updates,
+            text="Download & Install Update",
+            height=36,
+            command=self._start_update_install,
+        )
 
         # --- ADVANCED FEATURES SECTION ---
         ctk.CTkLabel(self.glob_scroll, text="Advanced Features:", font=("", 12, "bold")).pack(anchor="w", padx=10, pady=(0, 5))
@@ -452,6 +470,9 @@ class SettingsWindow(ctk.CTkToplevel):
 
             def apply():
                 self._update_check_running = False
+                self._available_release = None
+                self.update_install_btn.pack_forget()
+
                 if release is None:
                     self._show_update_result(
                         "Could not reach GitHub to check for updates.",
@@ -464,15 +485,44 @@ class SettingsWindow(ctk.CTkToplevel):
                     )
                 else:
                     notes = release["notes"] or "No release notes were provided."
-                    self._show_update_result(
-                        f"Version {release['tag']} is available. The menu bar app "
-                        "will offer to install it.",
-                        notes, status_color="#3B8ED0"
-                    )
+                    self._available_release = release
+
+                    if is_frozen() and release.get("asset_url"):
+                        self._show_update_result(
+                            f"Version {release['tag']} is available.",
+                            notes, status_color="#3B8ED0"
+                        )
+                        self.update_install_btn.configure(
+                            state="normal", text="Download & Install Update"
+                        )
+                        self.update_install_btn.pack(pady=(0, 20))
+                    else:
+                        self._show_update_result(
+                            f"Version {release['tag']} is available — "
+                            "download it from the release page.",
+                            notes, status_color="#3B8ED0"
+                        )
 
             schedule_on_ui_thread(self._ui_root, apply)
 
         threading.Thread(target=check, daemon=True).start()
+
+    def _start_update_install(self):
+        """Ask the menu-bar app to download and install the available update."""
+        try:
+            with open(self.core.runtime_path("install_update.flag"), "w") as f:
+                f.write("1")
+        except Exception as e:
+            self.update_status_lbl.configure(
+                text=f"Could not start the update: {e}", text_color="#e74c3c"
+            )
+            return
+
+        self.update_install_btn.configure(state="disabled", text="Downloading…")
+        self.update_status_lbl.configure(
+            text="Update started — the app will restart when it is ready.",
+            text_color="#2fa572",
+        )
 
     def confirm_reset_app_data(self):
         """Ask for typed confirmation before wiping all saved settings."""

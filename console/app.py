@@ -141,6 +141,18 @@ class SysAdminConsole(rumps.App):
         """Kick the daily update check off the main thread."""
         threading.Thread(target=self.updater.maybe_auto_check, daemon=True).start()
 
+    def _check_install_request(self):
+        """Install an update when the dashboard's Updates tab requests one."""
+        flag = self.core.runtime_path("install_update.flag")
+        if not os.path.exists(flag):
+            return
+        try:
+            os.remove(flag)
+        except OSError:
+            pass
+        self.core.log("UPDATER", "Install requested from dashboard")
+        threading.Thread(target=self.updater.install_latest, daemon=True).start()
+
     def build_machine_list(self):
         """Rebuild the Quick Connect submenu from the current machine settings."""
         self.menu_lookup = {}
@@ -363,6 +375,7 @@ class SysAdminConsole(rumps.App):
         self.core.settings = self.core.load_settings(silent=True)
 
         self._apply_pending_status()
+        self._check_install_request()
 
         while True:
             try:

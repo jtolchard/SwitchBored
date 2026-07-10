@@ -179,6 +179,39 @@ class UpdateManager:
         finally:
             self._check_lock.release()
 
+    def install_latest(self):
+        """Download and install the latest release without prompting.
+
+        Triggered by the dashboard's Updates tab, where the user has already
+        chosen to install; call from a background thread.
+        """
+        if not self._check_lock.acquire(blocking=False):
+            return
+
+        try:
+            try:
+                release = fetch_latest_release()
+            except Exception as e:
+                release = None
+                self.core.log("UPDATER", f"Install check failed: {type(e).__name__}: {e}")
+
+            if release is None:
+                self._alert("Update Failed", "Could not reach GitHub to download the update.")
+                return
+
+            if release["version"] <= self.current_version:
+                return
+
+            if not (is_frozen() and release["asset_url"]):
+                # Nothing to self-install (running from source, or no bundle
+                # attached); fall back to the release page.
+                self._offer_update(release)
+                return
+
+            self._download_and_install(release)
+        finally:
+            self._check_lock.release()
+
     # ------------------------------------------------------------------
     # Prompting and installing
     # ------------------------------------------------------------------
