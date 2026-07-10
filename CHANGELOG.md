@@ -7,6 +7,12 @@ and versions follow `MAJOR.MINOR.PATCH`.
 
 ## [1.3.3] - 2026-07-10
 
+### Added
+- Added new download button on update tab (settings)
+
+### Changed
+- Improved tab styling on settings window
+
 ### Fixed
 - systemctl polling fixed. Service status now reads correctly on non-English
   (localized) hosts
