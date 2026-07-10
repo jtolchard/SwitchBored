@@ -5,6 +5,12 @@ All notable changes to SwitchBored are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow `MAJOR.MINOR.PATCH`.
 
+## [1.3.3] - 2026-07-10
+
+### Fixed
+- systemctl polling fixed. Service status now reads correctly on non-English
+  (localized) hosts
+
 ## [1.3.2] - 2026-07-10
 
 ### Added

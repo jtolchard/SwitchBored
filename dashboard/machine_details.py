@@ -200,29 +200,55 @@ class MachineDetailsWindow(ctk.CTkToplevel):
         m_ref["user"] = target_user
 
         for s, pill in self.svcs.items():
-            # cmd must be bound as a default arg: the loop variable would
-            # otherwise be resolved late, checking the wrong service.
-            def check(p=pill, cmd=f"systemctl status {shlex.quote(s)} -n 0", m_ref=m_ref):
+            # `systemctl show` reports machine-readable state (LoadState=...,
+            # ActiveState=...) in English keywords regardless of the remote
+            # host's locale, unlike `systemctl status`, whose text is
+            # translated and version-dependent. cmd is a default arg so the
+            # loop variable isn't resolved late onto the wrong service.
+            def check(p=pill, cmd=f"systemctl show {shlex.quote(s)} --property=LoadState,ActiveState", m_ref=m_ref):
                 ok, raw = self.core.run_ssh_command(m_ref, cmd)
-                raw = raw.lower()
+                label, color = self._parse_service_state(ok, raw)
 
                 def apply():
-                    if not self.winfo_exists() or not p.winfo_exists():
-                        return
-                    if not ok:
-                        p.configure(text="● ERROR", text_color="#d48806")
-                    elif "could not be found" in raw:
-                        p.configure(text="● NOT FOUND", text_color="#aaaaaa")
-                    elif "active (running)" in raw or "active (exited)" in raw:
-                        p.configure(text="● ACTIVE", text_color="#2fa572")
-                    elif "inactive (dead)" in raw or "inactive" in raw:
-                        p.configure(text="● STOPPED", text_color="#e74c3c")
-                    else:
-                        p.configure(text="● ERROR", text_color="#d48806")
+                    if self.winfo_exists() and p.winfo_exists():
+                        p.configure(text=f"● {label}", text_color=color)
 
                 schedule_on_ui_thread(self._ui_root, apply)
 
             threading.Thread(target=check, daemon=True).start()
+
+    @staticmethod
+    def _parse_service_state(ok, raw):
+        """Map `systemctl show` output to a (label, colour) status pill.
+
+        Reads the LoadState / ActiveState properties, which systemd always
+        emits as fixed English keywords, so this is locale-independent.
+        """
+        if not ok:
+            return "ERROR", "#d48806"
+
+        props = {}
+        for line in (raw or "").splitlines():
+            key, sep, value = line.partition("=")
+            if sep:
+                props[key.strip()] = value.strip().lower()
+
+        load = props.get("LoadState", "")
+        active = props.get("ActiveState", "")
+
+        if load in ("not-found", "masked") or (not active and "not found" in (raw or "").lower()):
+            return "NOT FOUND", "#aaaaaa"
+        if active == "active":
+            return "ACTIVE", "#2fa572"
+        if active == "failed":
+            return "FAILED", "#e74c3c"
+        if active in ("activating", "reloading"):
+            return "STARTING", "#d48806"
+        if active == "deactivating":
+            return "STOPPING", "#d48806"
+        if active == "inactive":
+            return "STOPPED", "#e74c3c"
+        return "ERROR", "#d48806"
 
     def run_admin_cmd(self, cmd_data):
         """Run a configured admin command and display the output in a viewer."""
