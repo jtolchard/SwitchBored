@@ -49,6 +49,15 @@ class SettingsWindow(ctk.CTkToplevel):
         # Main tab layout
         self.tabs = ctk.CTkTabview(self, command=self._on_tab_selected)
         self.tabs.pack(fill="both", expand=True, padx=10, pady=0)
+
+        # Give the tab strip visible segment boundaries: a lighter strip
+        # background shows through the 1px gap around each tab button.
+        # (Unselected tabs are gray29 = #4a4a4a, so the strip must be
+        # noticeably lighter than that.)
+        try:
+            self.tabs._segmented_button.configure(border_width=1, fg_color="#5f5f5f")
+        except Exception:
+            pass
         self.tab_glob = self.tabs.add("Global Settings")
         self.tab_mach = self.tabs.add("Machines")
         self.plugins_tab = self.tabs.add("Plugins")
@@ -83,17 +92,17 @@ class SettingsWindow(ctk.CTkToplevel):
         ).pack(side="left")
         
         ctk.CTkButton(
-            btn_frame, 
-            text="Export JSON", 
-            fg_color="#d48806", 
+            btn_frame,
+            text="Export Machines",
+            fg_color="#d48806",
             hover_color="#b57305",
             command=self.export_config
         ).pack(side="right")
 
         ctk.CTkButton(
-            btn_frame, 
-            text="Import JSON", 
-            fg_color="#d48806", 
+            btn_frame,
+            text="Import Machines",
+            fg_color="#d48806",
             hover_color="#b57305",
             command=self.import_config
         ).pack(side="right", padx=(0, 10))
@@ -166,35 +175,70 @@ class SettingsWindow(ctk.CTkToplevel):
         self.ping_job = None
         self.toggle_ref_server()
 
-        ctk.CTkLabel(self.glob_scroll, text="Custom Menu Bar Links:", font=("", 12, "bold")).pack(anchor="w", padx=10, pady=(15, 0))
-        
+        links_title = ctk.CTkFrame(self.glob_scroll, fg_color="transparent")
+        links_title.pack(fill="x", padx=10, pady=(15, 0))
+
+        ctk.CTkLabel(links_title, text="Custom Menu Bar Shortcuts:", font=("", 12, "bold")).pack(side="left")
+
+        links_info = ctk.CTkButton(links_title, text="?", width=20, height=20,
+                                   corner_radius=10, fg_color="#555555")
+        links_info.pack(side="left", padx=8)
+        ToolTip(links_info,
+                "URL — opens in your browser.\n"
+                "App — opens a new window of a macOS app; use its exact\n"
+                "name, e.g. 'Visual Studio Code' or 'iTerm'.\n"
+                "Command — runs a shell command in the background.")
+
         header_row = ctk.CTkFrame(self.glob_scroll, fg_color="transparent")
         header_row.pack(fill="x", padx=10, pady=(0, 2))
-        
+
         ctk.CTkLabel(header_row, text="", width=20).pack(side="left", padx=2)
-        ctk.CTkLabel(header_row, text="Name", width=120, anchor="w").pack(side="left", padx=2)
-        ctk.CTkLabel(header_row, text="URL", width=320, anchor="w").pack(side="left", padx=2)
-        
+        ctk.CTkLabel(header_row, text="Name", width=110, anchor="w").pack(side="left", padx=2)
+        ctk.CTkLabel(header_row, text="Type", width=100, anchor="w").pack(side="left", padx=2)
+        ctk.CTkLabel(header_row, text="Target", width=250, anchor="w").pack(side="left", padx=2)
+
+        type_labels = {"url": "URL", "app": "App", "command": "Command"}
+        placeholders = {
+            "URL": "example.com",
+            "App": "Application name",
+            "Command": "shell command",
+        }
+
         self.web_link_rows = []
         saved_links = self.settings.get("custom_links", [])
 
         for i in range(3):
             row = ctk.CTkFrame(self.glob_scroll, fg_color="transparent")
             row.pack(fill="x", padx=10, pady=2)
-            
-            existing = saved_links[i] if i < len(saved_links) else {"name": "", "url": ""}
-            
+
+            existing = saved_links[i] if i < len(saved_links) else {}
+
             ctk.CTkLabel(row, text=f"{i+1}.", width=20, anchor="e").pack(side="left", padx=2)
-            
-            name_ent = ctk.CTkEntry(row, placeholder_text="Display Name", width=120)
+
+            name_ent = ctk.CTkEntry(row, placeholder_text="Display Name", width=110)
             name_ent.insert(0, existing.get("name", ""))
             name_ent.pack(side="left", padx=2)
-            
-            url_ent = ctk.CTkEntry(row, placeholder_text="example.com", width=320)
-            url_ent.insert(0, existing.get("url", ""))
-            url_ent.pack(side="left", padx=2)
-            
-            self.web_link_rows.append((name_ent, url_ent))
+
+            kind_label = type_labels.get(existing.get("type", "url"), "URL")
+            type_var = ctk.StringVar(value=kind_label)
+
+            value_ent = ctk.CTkEntry(row, placeholder_text=placeholders[kind_label], width=250)
+            # Older settings stored the target under 'url'.
+            value_ent.insert(0, existing.get("value", existing.get("url", "")))
+
+            ctk.CTkOptionMenu(
+                row,
+                values=["URL", "App", "Command"],
+                variable=type_var,
+                width=100,
+                height=24,
+                font=("", 12),
+                command=lambda choice, ent=value_ent: ent.configure(placeholder_text=placeholders[choice]),
+            ).pack(side="left", padx=2)
+
+            value_ent.pack(side="left", padx=2)
+
+            self.web_link_rows.append((name_ent, type_var, value_ent))
 
         # --- TERMINAL APP SELECTION ---
         term_frame = ctk.CTkFrame(self.glob_scroll, fg_color="transparent")
@@ -498,8 +542,9 @@ class SettingsWindow(ctk.CTkToplevel):
         """Export the current settings to a user-selected JSON file."""
         filepath = filedialog.asksaveasfilename(
             defaultextension=".json",
+            initialfile="switchbored_machines.json",
             filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")],
-            title="Export Settings"
+            title="Export Machines"
         )
         if filepath:
             try:
@@ -513,7 +558,7 @@ class SettingsWindow(ctk.CTkToplevel):
         """Import settings from a JSON file, sanitize them, and reload the dashboard."""
         filepath = filedialog.askopenfilename(
             filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")],
-            title="Import Settings"
+            title="Import Machines"
         )
         if filepath:
             try:
@@ -787,6 +832,24 @@ class SettingsWindow(ctk.CTkToplevel):
 
         threading.Thread(target=do_ping, daemon=True).start()
 
+    def _collect_shortcut_links(self):
+        """Read the shortcut rows into custom_links entries."""
+        label_to_type = {"URL": "url", "App": "app", "Command": "command"}
+
+        links = []
+        for name_ent, type_var, value_ent in self.web_link_rows:
+            name = name_ent.get().strip()
+            value = value_ent.get().strip()
+            if not (name and value):
+                continue
+
+            kind = label_to_type.get(type_var.get(), "url")
+            if kind == "url" and not (value.startswith("http://") or value.startswith("https://")):
+                value = "https://" + value
+
+            links.append({"name": name, "type": kind, "value": value})
+        return links
+
     def save_all(self):
         """Validate, collect, and persist all settings, then show the appropriate follow-up dialog."""
         self.core.log("UI", "User clicked Save & Apply. Validating settings...")
@@ -815,15 +878,7 @@ class SettingsWindow(ctk.CTkToplevel):
             self.settings["last_filter"] = "All"
             self.settings["last_h"] = None
             
-        new_links = []
-        for name_e, url_e in self.web_link_rows:
-            n, u = name_e.get().strip(), url_e.get().strip()
-            if n and u:
-                if not (u.startswith("http://") or u.startswith("https://")):
-                    u = "https://" + u
-                new_links.append({"name": n, "url": u})
-                
-        self.settings["custom_links"] = new_links
+        self.settings["custom_links"] = self._collect_shortcut_links()
         self.settings["terminal_type"] = self.term_var.get()
         self.settings["sftp_tool"] = self.sftp_var.get()
         self.settings["use_ref_server"] = self.use_ref_var.get()

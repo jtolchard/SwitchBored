@@ -106,8 +106,12 @@ class MachineDetailsWindow(ctk.CTkToplevel):
                     if not self.admin_user:
                         btn.configure(state="disabled", fg_color="#555555")
 
+        # Let plugins add their own sections (e.g. usb_block) before the
+        # window measures its natural height below.
+        find_ui_root(self).plugin_hook("on_machine_details", self, self.machine, self)
+
         self.schedule_refresh()
-        self.withdraw() 
+        self.withdraw()
         self.update_idletasks()
         
         natural_width = 550 

@@ -42,6 +42,11 @@ class RemoteManagerDash(DebugConsoleMixin, ctk.CTk):
         self.stop_event = threading.Event()
         self._ui_queue = queue.Queue()
 
+        # Plugins that extend dashboard windows (e.g. usb_block) implement
+        # on_machine_details / on_machine_editor and are dispatched via
+        # plugin_hook. The console loads its own copy for menu-bar plugins.
+        self.plugins = self.core.load_plugins()
+
         self.withdraw()
         self.attributes("-alpha", 0)
         self.title("Dashboard")
@@ -106,6 +111,20 @@ class RemoteManagerDash(DebugConsoleMixin, ctk.CTk):
             self.config(menu=menubar)
         except Exception:
             pass
+
+    def plugin_hook(self, hook_name, *args, **kwargs):
+        """Call a named hook on each loaded plugin that implements it.
+
+        Child windows reach this via find_ui_root(widget).plugin_hook(...).
+        """
+        for plugin in getattr(self, "plugins", []):
+            fn = getattr(plugin, hook_name, None)
+            if callable(fn):
+                try:
+                    fn(*args, **kwargs)
+                except Exception as e:
+                    name = plugin.__class__.__module__.split(".")[-1]
+                    self.core.log("PLUGINS", f"{name}.{hook_name} error: {type(e).__name__}: {e}")
 
     # --- THREAD-SAFE UI SCHEDULING ---
     def ui_call(self, fn):

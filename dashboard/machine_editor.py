@@ -18,16 +18,11 @@ class MachineEditorWindow(ctk.CTkToplevel):
         # --- WINDOW GEOMETRY ---
         sysadmin_enabled = parent.settings.get("sysadmin_features", False)
 
-        # The sysadmin section adds extra rows, so the window grows with it.
+        # Stay hidden while building; the window is sized to its content at
+        # the end of __init__, so sections and plugin rows can never squeeze
+        # the Save/Cancel footer out of a hardcoded height.
         window_width = 650
-        window_height = 680 if sysadmin_enabled else 420
-        
-        screen_width = self.winfo_screenwidth()
-        screen_height = self.winfo_screenheight()
-        center_x = int((screen_width / 2) - (window_width / 2))
-        center_y = int((screen_height / 2) - (window_height / 2))
-        
-        self.geometry(f"{window_width}x{window_height}+{center_x}+{center_y}")
+        self.withdraw()
         self.resizable(False, False)
         self.transient(parent)
         self.bind("<Escape>", lambda e: self.destroy())
@@ -100,11 +95,15 @@ class MachineEditorWindow(ctk.CTkToplevel):
                            command=self._open_admin_cmd_editor).pack(pady=(2, 0))
 
             r6 = self._create_row(self.main_view)
-            self.services_entry = self._create_field(r6, "Tracked System Services (comma separated)", 
+            self.services_entry = self._create_field(r6, "Tracked System Services (comma separated)",
                                                    ", ".join(self.machine_data.get("services", [])), width=590)
             r7 = self._create_row(self.main_view)
-            self.logs_entry = self._create_field(r7, "Log File Paths (comma separated)", 
+            self.logs_entry = self._create_field(r7, "Log File Paths (comma separated)",
                                                ", ".join(self.machine_data.get("logs", [])), width=590)
+
+            # Let plugins add their own sysadmin-scoped controls (e.g.
+            # usb_block); each plugin creates its own row in main_view.
+            find_ui_root(self).plugin_hook("on_machine_editor", self, self.machine_data, self.main_view)
 
         # --- FOOTER ---
         footer = ctk.CTkFrame(self, fg_color="transparent")
@@ -114,6 +113,14 @@ class MachineEditorWindow(ctk.CTkToplevel):
         
         ctk.CTkButton(btn_container, text="Cancel", fg_color="#555555", width=120, command=self.destroy).pack(side="left", padx=10)
         ctk.CTkButton(btn_container, text="Save Machine", fg_color="#2fa572", width=120, command=self.save).pack(side="left", padx=10)
+
+        # Size the window to its content and centre it on screen.
+        self.update_idletasks()
+        window_height = self.winfo_reqheight()
+        center_x = int((self.winfo_screenwidth() / 2) - (window_width / 2))
+        center_y = int((self.winfo_screenheight() / 2) - (window_height / 2))
+        self.geometry(f"{window_width}x{window_height}+{center_x}+{center_y}")
+        self.deiconify()
 
     # --- UI HELPERS ---
     def _styled_header(self, parent, text):
@@ -221,6 +228,10 @@ class MachineEditorWindow(ctk.CTkToplevel):
             self.machine_data["admin_cmds"] = self.temp_admin_cmds
             self.machine_data["services"] = [s.strip() for s in self.services_entry.get().split(",") if s.strip()]
             self.machine_data["logs"] = [l.strip() for l in self.logs_entry.get().split(",") if l.strip()]
+
+        # Plugins commit their editor state only on save, so cancelling the
+        # editor discards their toggles along with everything else.
+        find_ui_root(self).plugin_hook("on_machine_editor_save", self, self.machine_data)
 
         self.on_save(self.machine_data)
         self.destroy()
