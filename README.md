@@ -24,7 +24,9 @@ remote service control and log viewing over SSH.
   when it has been unreachable for 30 seconds while the reference server is
   still reachable (so it's the machine that's down, not your network).
   Requires the reference server check and the bundled app.
-- **Custom menu links** — pin up to three web links to the menu bar menu.
+- **Custom menu shortcuts** — pin up to three entries to the menu bar menu:
+  web links, app launchers (a fresh window of e.g. iTerm or VS Code), or
+  shell commands.
 - **Plugins** — drop a Python file into `plugins/` to add your own menu items
   and background monitors (see [Writing plugins](#writing-plugins)).
 
@@ -50,7 +52,9 @@ remote service control and log viewing over SSH.
 
 Grab the latest `SwitchBored.zip` from the
 [Releases page](https://github.com/jtolchard/SwitchBored/releases/latest),
-unzip it, and drag `SwitchBored.app` into `/Applications`.
+unzip it, and drag `SwitchBored.app` into `/Applications`. The bundled app
+requires an Apple-silicon Mac running macOS 11 (Big Sur) or later; Intel
+users can run from source.
 
 > **First launch:** the app is not notarized by Apple, so macOS may refuse to
 > open it. Go to System Settings → Privacy & Security and click
@@ -92,8 +96,8 @@ points you at the release page; update with `git pull`.
 Everything SwitchBored saves is in
 `~/Library/Application Support/SwitchBored/`:
 
-- `sysadmin_settings.json` — all settings and machines (export/import as
-  JSON from the Settings window; run with `--test` to use a separate file)
+- `sysadmin_settings.json` — all settings and machines (export/import from
+  the Machines tab in Settings; run with `--test` to use a separate file)
 - `plugins/` — plugins you've installed
 - debug logs and updater state
 
@@ -155,6 +159,9 @@ All hooks are optional. The host calls them if they exist:
 | `on_menu_build(app)` | Every time the menu is rebuilt (startup, settings changes). Add your menu items here — the menu is cleared before each rebuild, so re-adding is expected. |
 | `start(menu_item)` | Alternative to `on_menu_build`: the host creates a submenu for you under a shared "Plugins" menu and passes it in. |
 | `stop()` | On app restart or quit. Stop your threads and timers here. |
+| `on_machine_editor(editor, machine, frame)` | When the machine editor opens (sysadmin mode). Pack per-machine controls into `frame`; keep state on `editor`. |
+| `on_machine_editor_save(editor, machine)` | When the machine is saved. Commit your editor state to the machine dict here — cancelling skips it. |
+| `on_machine_details(window, machine, frame)` | When a machine's details window opens. Add status displays or actions; an `after()` loop guarded by `winfo_exists()` self-terminates on close. |
 
 ### Settings
 
@@ -197,23 +204,28 @@ included [`setup.py`](setup.py) — it reads the app name and version from
 
 Two environment rules matter:
 
-- **Use a framework build of Python with Tk** — Homebrew's
-  `python@3.13` + `python-tk@3.13`, or the python.org installer.
-  Conda/miniforge Python produces bundles that are missing libraries
-  (libffi, Tcl/Tk, …) and fail to launch.
+- **For release builds, use the [python.org installer](https://www.python.org/downloads/macos/)**
+  (the "macOS 64-bit universal2" package). Its binaries target macOS 10.13+,
+  so the bundle runs on older systems. Homebrew Python also builds a working
+  app, but its libraries are compiled for the macOS version of the build
+  machine — the bundle then refuses to launch anywhere older ("Fatal Error"
+  at startup). Conda/miniforge Python doesn't work at all (missing libraries
+  at runtime).
 - **Build from a clean virtual environment** containing only the app's
   requirements, so py2app's dependency scan doesn't try to walk every
   package on your system.
 
 ```bash
-brew install python@3.13 python-tk@3.13        # once
-/opt/homebrew/bin/python3.13 -m venv .venv
+/usr/local/bin/python3.13 -m venv .venv        # python.org's interpreter
 .venv/bin/pip install -r requirements.txt py2app
 .venv/bin/python setup.py py2app               # → dist/SwitchBored.app
 ```
 
-Homebrew builds are Apple-silicon-only; to ship a bundle that also runs on
-Intel Macs, build with the python.org universal2 installer instead.
+Before publishing, confirm the bundle's minimum macOS is what you expect:
+
+```bash
+vtool -show-build dist/SwitchBored.app/Contents/MacOS/python | grep minos
+```
 
 The dashboard and About windows are child processes launched by the app
 re-invoking itself with internal `--dashboard` / `--about` flags, which
