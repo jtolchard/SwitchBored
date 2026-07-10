@@ -7,6 +7,7 @@ import signal
 import socket
 import tempfile
 import threading
+import subprocess
 import webbrowser
 import atexit
 from collections import deque
@@ -203,16 +204,49 @@ class SysAdminConsole(rumps.App):
         links = self.core.settings.get("custom_links", [])
         if links:
             for link in links:
-                self.add_web_item(link['name'], link['url'])
+                self.add_shortcut_item(link)
             self.menu.add(rumps.separator)
 
         self.menu.add(rumps.MenuItem("Quit", callback=self.custom_quit))
 
-    def add_web_item(self, name, url):
-        """Add a menu item that opens a web link in the default browser."""
-        def open_url_callback(_):
-            webbrowser.open(url)
-        self.menu.add(rumps.MenuItem(name, callback=open_url_callback))
+    def add_shortcut_item(self, link):
+        """Add a menu item for a custom shortcut (URL, app, or shell command)."""
+        name = link.get("name", "")
+        # Older settings stored the target under 'url' with no type.
+        value = link.get("value") or link.get("url", "")
+        kind = link.get("type", "url")
+
+        if not name or not value:
+            return
+
+        self.menu.add(rumps.MenuItem(
+            name,
+            callback=lambda _, k=kind, v=value: self._launch_shortcut(k, v),
+        ))
+
+    def _launch_shortcut(self, kind, value):
+        """Run a custom shortcut: open a URL, an app instance, or a command."""
+        self.core.log("SHORTCUT", f"Launching {kind}: {value}")
+        try:
+            if kind == "app":
+                # -n opens a new instance, so e.g. iTerm or VS Code get a
+                # fresh window rather than just focusing an existing one.
+                res = subprocess.run(["open", "-na", value], capture_output=True, text=True)
+                if res.returncode != 0:
+                    rumps.alert(
+                        title="App Not Found",
+                        message=(
+                            f'macOS could not open an application called "{value}".\n'
+                            'Use the app\'s exact name, e.g. "Visual Studio Code".'
+                        ),
+                        ok="OK",
+                    )
+            elif kind == "command":
+                subprocess.Popen(value, shell=True, start_new_session=True)
+            else:
+                webbrowser.open(value)
+        except Exception as e:
+            self.core.log("SHORTCUT", f"Launch failed: {type(e).__name__}: {e}")
 
 
     def _flush_debug_log_backlog(self):
@@ -319,6 +353,12 @@ class SysAdminConsole(rumps.App):
     def process_ui_updates(self, timer):
         """Refresh settings-driven UI state and rebuild menu elements when needed."""
         self._flush_debug_log_backlog()
+
+        # Reap the dashboard child promptly if it has exited, so no zombie
+        # entry lingers in Activity Monitor until the next interaction.
+        proc = self.dashboard_runtime.dashboard_proc
+        if proc is not None:
+            proc.poll()
 
         self.core.settings = self.core.load_settings(silent=True)
 
