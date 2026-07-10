@@ -1,4 +1,4 @@
 """Single source of truth for the application name and version."""
 
 APP_NAME = "SwitchBored"
-VERSION = "1.3.1"
+VERSION = "1.3.2"
