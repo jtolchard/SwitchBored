@@ -1,6 +1,8 @@
 import subprocess
 import os
 
+from proc_env import clean_child_env
+
 class ActionManager:
     """Launch helper for terminal, SSH, SFTP, and VNC actions."""
 
@@ -29,7 +31,7 @@ class ActionManager:
             script = f'tell application "iTerm" to create window with profile "Default" command "{escaped}"'
         else:
             script = f'tell application "Terminal" to do script "{escaped}"'
-        subprocess.Popen(["osascript", "-e", script])
+        subprocess.Popen(["osascript", "-e", script], env=clean_child_env())
 
     def open_terminal(self, machine):
         """Open an interactive SSH session in the preferred terminal."""
@@ -54,7 +56,7 @@ class ActionManager:
         if tool == "FileZilla":
             fz_path = "/Applications/FileZilla.app/Contents/MacOS/filezilla"
             if os.path.exists(fz_path):
-                subprocess.Popen([fz_path, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.Popen([fz_path, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=clean_child_env())
             else:
                 self._notify_app_missing(
                     "FileZilla Not Found",
@@ -65,7 +67,7 @@ class ActionManager:
             # Default to Cyberduck via 'open' command
             duck_path = "/Applications/Cyberduck.app"
             if os.path.exists(duck_path):
-                subprocess.Popen(["open", "-a", "Cyberduck", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.Popen(["open", "-a", "Cyberduck", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=clean_child_env())
             else:
                 self._notify_app_missing(
                     "Cyberduck Not Found",
@@ -81,7 +83,7 @@ class ActionManager:
 
         if os.path.exists(exec_path):
             cmd = [exec_path, f"{address}:5900", "-ProtocolVersion=3.3"]
-            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=clean_child_env())
         else:
             self._notify_app_missing(
                 "VNC Viewer Not Found",

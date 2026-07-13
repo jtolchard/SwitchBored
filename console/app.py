@@ -17,6 +17,7 @@ from actions import ActionManager
 from console.dashboard_runtime import DashboardRuntime
 from console.restart import handle_restart
 from console.bootstrap import apply_macos_bundle_name, spawn_self
+from proc_env import clean_child_env
 from console.process_guard import acquire_console_lock, release_console_lock
 from console.updater import UpdateManager
 from version import APP_NAME, VERSION
@@ -243,7 +244,7 @@ class SysAdminConsole(rumps.App):
             if kind == "app":
                 # -n opens a new instance, so e.g. iTerm or VS Code get a
                 # fresh window rather than just focusing an existing one.
-                res = subprocess.run(["open", "-na", value], capture_output=True, text=True)
+                res = subprocess.run(["open", "-na", value], capture_output=True, text=True, env=clean_child_env())
                 if res.returncode != 0:
                     rumps.alert(
                         title="App Not Found",
@@ -254,7 +255,7 @@ class SysAdminConsole(rumps.App):
                         ok="OK",
                     )
             elif kind == "command":
-                subprocess.Popen(value, shell=True, start_new_session=True)
+                subprocess.Popen(value, shell=True, start_new_session=True, env=clean_child_env())
             else:
                 webbrowser.open(value)
         except Exception as e:

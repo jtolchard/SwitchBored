@@ -5,6 +5,16 @@ All notable changes to SwitchBored are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow `MAJOR.MINOR.PATCH`.
 
+
+## [1.3.4] - 2026-07-13
+
+### Fixed
+- The app no longer leaks its internal PYTHONHOME/PYTHONPATH into Terminal
+  windows, shortcuts, or other processes it launches, which could break
+  the system python
+
+------------------------
+
 ## [1.3.3] - 2026-07-10
 
 ### Added

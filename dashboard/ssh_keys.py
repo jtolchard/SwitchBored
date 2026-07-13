@@ -3,6 +3,8 @@ import glob
 import shlex
 import subprocess
 
+from proc_env import clean_child_env
+
 class SSHKeyAssistant:
     """Utility helpers for discovering, generating, and deploying SSH keys."""
 
@@ -75,4 +77,4 @@ class SSHKeyAssistant:
                 end tell
             end run
             '''
-        subprocess.run(["osascript", "-e", ascript, full_shell_command])
+        subprocess.run(["osascript", "-e", ascript, full_shell_command], env=clean_child_env())

@@ -21,6 +21,10 @@ if [ ! -x "$PYTHON" ]; then
     exit 1
 fi
 
+# Purge compiled bytecode so stale .pyc files (e.g. from a plugin that once
+# lived here) can't be copied into the bundle.
+find . -name "__pycache__" -type d -prune -exec rm -rf {} +
+
 # Refuse to bundle plugins that aren't meant for public distribution.
 EXTRA_PLUGINS=$(find plugins -name "*.py" ! -name "__init__.py" ! -name "menu_template.py")
 if [ -n "$EXTRA_PLUGINS" ]; then
