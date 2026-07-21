@@ -5,7 +5,6 @@ import time
 import queue
 import signal
 import socket
-import tempfile
 import threading
 import subprocess
 import webbrowser
@@ -289,6 +288,10 @@ class SysAdminConsole(rumps.App):
         if not pending or not hasattr(self, "menu_lookup"):
             return
 
+        # Self-heal the dot images if the OS cleaned them up while running.
+        self.menu_green_dot = self._get_status_icon("#2fa572")
+        self.menu_red_dot = self._get_status_icon("#e74c3c")
+
         machines = self.core.settings.get("machines", [])
         now = time.time()
 
@@ -297,13 +300,18 @@ class SysAdminConsole(rumps.App):
             if not entry:
                 continue
 
-            entry["item"].icon = self.menu_green_dot if is_online else self.menu_red_dot
+            try:
+                entry["item"].icon = self.menu_green_dot if is_online else self.menu_red_dot
+
+                if 0 <= idx < len(machines):
+                    machine = machines[idx]
+                    icon = machine.get("icon", "💻")
+                    entry["item"].title = f"{icon} {entry['name']}"
+            except Exception:
+                continue
 
             if 0 <= idx < len(machines):
                 machine = machines[idx]
-                icon = machine.get("icon", "💻")
-                entry["item"].title = f"{icon} {entry['name']}"
-
                 if self._should_notify_offline(machine, entry["address"], is_online, now):
                     self._notify_machine_offline(machine)
 
@@ -428,6 +436,9 @@ class SysAdminConsole(rumps.App):
         new_icon = None
 
         if curr_ref_toggle and self.reference_status is not None:
+            # Regenerates if the OS purged the images while running.
+            self.green_dot = self._generate_dot("green", "#2fa572")
+            self.red_dot = self._generate_dot("red", "#e74c3c")
             new_icon = self.green_dot if self.reference_status else self.red_dot
 
         if self._current_title != new_title:
@@ -480,26 +491,28 @@ class SysAdminConsole(rumps.App):
         # Run the entire batch in a manager thread so the rumps timer itself stays responsive.
         threading.Thread(target=perform_checks, daemon=True).start()
 
+    def _dot_path(self, filename, size, box, color):
+        """Return the path to a status dot PNG, generating it if missing.
+
+        Stored under Application Support rather than the temp directory:
+        macOS periodically purges temp files, which used to make the menu
+        dots silently vanish after a few days (or a sleep past the cleanup
+        window). Regenerating on demand makes them self-healing.
+        """
+        path = self.core.runtime_path(filename)
+        if not os.path.exists(path):
+            img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+            ImageDraw.Draw(img).ellipse(box, fill=color)
+            img.save(path)
+        return path
+
     def _generate_dot(self, color_name, hex_color):
         """Create a retina-quality dot icon for the menu bar title area."""
-        img = Image.new('RGBA', (36, 36), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(img)
-
-        draw.ellipse((18, 10, 34, 26), fill=hex_color)
-        
-        path = os.path.join(tempfile.gettempdir(), f"dot_{color_name}.png")
-        img.save(path)
-        return path
+        return self._dot_path(f"dot_{color_name}.png", 36, (18, 10, 34, 26), hex_color)
 
     def _get_status_icon(self, color_hex):
         """Create a retina-quality status dot icon for machine submenu items."""
-        img = Image.new('RGBA', (32, 32), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(img)
-        draw.ellipse((8, 8, 24, 24), fill=color_hex)
-        
-        path = os.path.join(tempfile.gettempdir(), f"menu_dot_{color_hex.replace('#','')}.png")
-        img.save(path)
-        return path
+        return self._dot_path(f"menu_dot_{color_hex.replace('#', '')}.png", 32, (8, 8, 24, 24), color_hex)
 
     def custom_quit(self, _):
         """Stop plugins, shut down the dashboard gracefully, then quit the menu-bar app."""
