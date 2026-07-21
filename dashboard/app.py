@@ -13,6 +13,7 @@ from version import APP_NAME
 from ui_components import ToolTip, enable_trackpad_scrolling
 from .debug_console import DebugConsoleMixin
 from .machine_details import MachineDetailsWindow
+from .services_window import ServicesWindow
 from .settings_window import SettingsWindow
 from .dialogs import show_error_dialog
 from .ui_helpers import (
@@ -25,6 +26,29 @@ from .ui_helpers import (
     DISABLED_CONNECTION_BUTTON_STYLE,
     DASHBOARD_LAYOUT,
 )
+
+def _load_services_icon(size=20):
+    """Return the services toolbar icon as a CTkImage, or None for the fallback glyph.
+
+    In the bundled app the asset is copied into Contents/Resources; from
+    source it lives in dashboard/assets/.
+    """
+    candidates = []
+    resources = os.environ.get("RESOURCEPATH")
+    if resources:
+        candidates.append(os.path.join(resources, "services_icon.png"))
+    candidates.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "services_icon.png"))
+
+    for path in candidates:
+        if os.path.exists(path):
+            try:
+                from PIL import Image
+                img = Image.open(path).convert("RGBA")
+                return ctk.CTkImage(light_image=img, dark_image=img, size=(size, size))
+            except Exception:
+                return None
+    return None
+
 
 class RemoteManagerDash(DebugConsoleMixin, ctk.CTk):
     """Main dashboard window for machine status, filtering, and quick actions."""
@@ -239,15 +263,41 @@ class RemoteManagerDash(DebugConsoleMixin, ctk.CTk):
             font=("", 18, "bold")
         ).place(relx=0.5, rely=0.5, anchor="center")
 
+        self.header_btns = ctk.CTkFrame(self.header_frame, fg_color="transparent")
+        self.header_btns.grid(row=0, column=2, pady=(12, 5), sticky="e")
+
         self.settings_btn = ctk.CTkLabel(
-            self.header_frame,
+            self.header_btns,
             text="⚙",
             font=("", 28),
             cursor="pointinghand"
         )
-        self.settings_btn.grid(row=0, column=2, pady=(12, 5), sticky="e")
+        # The glyph's font metrics make it sit visually low; a little bottom
+        # padding lifts it so it centres with the services image icon.
+        self.settings_btn.pack(side="right", pady=(0, 5))
         self.settings_btn.bind("<Button-1>", lambda e: self.open_settings())
         ToolTip(self.settings_btn, "Settings")
+
+        # Services grid button; shown only with Sysadmin Features enabled.
+        services_icon = _load_services_icon()
+        if services_icon is not None:
+            self.services_btn = ctk.CTkLabel(
+                self.header_btns,
+                image=services_icon,
+                text="",
+                cursor="pointinghand"
+            )
+            self.services_btn._services_icon = services_icon  # keep a reference
+        else:
+            self.services_btn = ctk.CTkLabel(
+                self.header_btns,
+                text="▦",
+                font=("", 26),
+                cursor="pointinghand"
+            )
+        self.services_btn.bind("<Button-1>", lambda e: self.open_services())
+        ToolTip(self.services_btn, "Services")
+        self._update_services_button()
 
     def setup_status_bar(self):
         """Create the bottom status bar used for reference-server connectivity updates."""
@@ -386,6 +436,7 @@ class RemoteManagerDash(DebugConsoleMixin, ctk.CTk):
 
         self.toggle_status_bar()
         self.toggle_debug_console()
+        self._update_services_button()
 
         self.update_idletasks()
         self.after(10, self.truncate_names)
@@ -441,10 +492,27 @@ class RemoteManagerDash(DebugConsoleMixin, ctk.CTk):
     def open_settings(self):
         """Open the settings window, or focus it if it is already open."""
         self.core.log("UI", "Opening Settings Window")
-        if hasattr(self, "set_win") and self.set_win.winfo_exists(): 
+        if hasattr(self, "set_win") and self.set_win.winfo_exists():
             self.set_win.focus()
-        else: 
+        else:
             self.set_win = SettingsWindow(self, self.core)
+
+    def open_services(self):
+        """Open the services grid, replacing any existing services window."""
+        self.core.log("UI", "Opening Services Window")
+        if hasattr(self, "svc_win") and self.svc_win.winfo_exists():
+            self.svc_win.destroy()
+        self.svc_win = ServicesWindow(self, self.core)
+
+    def _update_services_button(self):
+        """Show or hide the services button based on the sysadmin setting."""
+        enabled = self.settings.get("sysadmin_features", False)
+        if enabled and not self.services_btn.winfo_ismapped():
+            # side="right" packs later widgets further left, so packing after
+            # the cog places the services button to its left.
+            self.services_btn.pack(side="right", padx=(0, 14), after=self.settings_btn)
+        elif not enabled and self.services_btn.winfo_ismapped():
+            self.services_btn.pack_forget()
 
     def handle_action(self, action_type, machine):
         """Dispatch a row action to the appropriate ActionManager method."""

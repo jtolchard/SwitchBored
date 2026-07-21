@@ -39,6 +39,8 @@ def mypyc_helper_modules():
 setup(
     app=["console.py"],
     name=APP_NAME,
+    # Runtime assets copied into Contents/Resources.
+    data_files=["dashboard/assets/services_icon.png"],
     options={
         "py2app": {
             "iconfile": "icon.icns",

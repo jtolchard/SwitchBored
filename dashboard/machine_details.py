@@ -4,6 +4,7 @@ import shlex
 import threading
 import customtkinter as ctk
 from ui_components import ToolTip
+from .service_status import parse_service_state
 from .ui_helpers import find_ui_root, schedule_on_ui_thread
 
 class MachineDetailsWindow(ctk.CTkToplevel):
@@ -207,7 +208,7 @@ class MachineDetailsWindow(ctk.CTkToplevel):
             # loop variable isn't resolved late onto the wrong service.
             def check(p=pill, cmd=f"systemctl show {shlex.quote(s)} --property=LoadState,ActiveState", m_ref=m_ref):
                 ok, raw = self.core.run_ssh_command(m_ref, cmd)
-                label, color = self._parse_service_state(ok, raw)
+                label, color = parse_service_state(ok, raw)
 
                 def apply():
                     if self.winfo_exists() and p.winfo_exists():
@@ -216,39 +217,6 @@ class MachineDetailsWindow(ctk.CTkToplevel):
                 schedule_on_ui_thread(self._ui_root, apply)
 
             threading.Thread(target=check, daemon=True).start()
-
-    @staticmethod
-    def _parse_service_state(ok, raw):
-        """Map `systemctl show` output to a (label, colour) status pill.
-
-        Reads the LoadState / ActiveState properties, which systemd always
-        emits as fixed English keywords, so this is locale-independent.
-        """
-        if not ok:
-            return "ERROR", "#d48806"
-
-        props = {}
-        for line in (raw or "").splitlines():
-            key, sep, value = line.partition("=")
-            if sep:
-                props[key.strip()] = value.strip().lower()
-
-        load = props.get("LoadState", "")
-        active = props.get("ActiveState", "")
-
-        if load in ("not-found", "masked") or (not active and "not found" in (raw or "").lower()):
-            return "NOT FOUND", "#aaaaaa"
-        if active == "active":
-            return "ACTIVE", "#2fa572"
-        if active == "failed":
-            return "FAILED", "#e74c3c"
-        if active in ("activating", "reloading"):
-            return "STARTING", "#d48806"
-        if active == "deactivating":
-            return "STOPPING", "#d48806"
-        if active == "inactive":
-            return "STOPPED", "#e74c3c"
-        return "ERROR", "#d48806"
 
     def run_admin_cmd(self, cmd_data):
         """Run a configured admin command and display the output in a viewer."""
