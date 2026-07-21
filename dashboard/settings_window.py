@@ -439,8 +439,12 @@ class SettingsWindow(ctk.CTkToplevel):
         if self.tabs.get() == "Updates":
             self.run_update_check()
 
-    def _show_update_result(self, status, notes, status_color=None):
-        """Fill in the Updates tab from the main thread."""
+    def _show_update_result(self, status, notes, status_color=None, notes_color="#ffffff"):
+        """Fill in the Updates tab from the main thread.
+
+        notes_color lets the current version's notes render muted (grey)
+        while a genuinely new release's notes stay prominent.
+        """
         if not self.winfo_exists():
             return
         kwargs = {"text": status}
@@ -451,7 +455,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self.update_notes_box.configure(state="normal")
         self.update_notes_box.delete("1.0", "end")
         self.update_notes_box.insert("1.0", notes)
-        self.update_notes_box.configure(state="disabled")
+        self.update_notes_box.configure(state="disabled", text_color=notes_color)
 
     def run_update_check(self):
         """Check GitHub for a newer release and show its notes in the tab."""
@@ -479,9 +483,12 @@ class SettingsWindow(ctk.CTkToplevel):
                         "", status_color="#d48806"
                     )
                 elif release["version"] <= current:
+                    # Show the current release's notes, muted, so the pane
+                    # isn't empty when there's nothing new.
+                    notes = release["notes"] or "No release notes were provided."
                     self._show_update_result(
                         "You are running the latest version.",
-                        "", status_color="#2fa572"
+                        notes, status_color="#2fa572", notes_color="gray"
                     )
                 else:
                     notes = release["notes"] or "No release notes were provided."
