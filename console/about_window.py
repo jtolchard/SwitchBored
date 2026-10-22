@@ -1,32 +1,15 @@
-import os
 import webbrowser
-from pathlib import Path
 
 import customtkinter as ctk
+
+from console.bootstrap import find_app_icon
 
 GITHUB_URL = "https://github.com/jtolchard/SwitchBored"
 LINKEDIN_URL = "https://www.linkedin.com/in/jamestolchard/"
 
-def _find_icon_file():
-    """Return the app icon path, preferring the bundle's Resources copy."""
-    candidates = []
-
-    resources = os.environ.get("RESOURCEPATH")
-    if resources:
-        candidates.append(os.path.join(resources, "icon.icns"))
-
-    project_root = Path(__file__).resolve().parent.parent
-    candidates.append(str(project_root / "icon.png"))
-    candidates.append(str(project_root / "icon.icns"))
-
-    for path in candidates:
-        if os.path.exists(path):
-            return path
-    return None
-
 def _load_icon_image(size=96):
     """Return the app icon as a CTkImage, or None if it cannot be loaded."""
-    path = _find_icon_file()
+    path = find_app_icon()
     if not path:
         return None
 
