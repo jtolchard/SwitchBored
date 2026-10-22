@@ -62,6 +62,33 @@ def _activate_app():
         pass
 
 
+def _join_current_desktop():
+    """Bring this process's visible windows to the desktop the user is on.
+
+    With MoveToActiveSpace set, activating a window pulls it onto the
+    current desktop (Space) instead of macOS switching the user back to
+    the desktop it was left on. Applied to every visible window so open
+    Settings or Details windows come along with the dashboard.
+
+    Re-applied on every call: Tk resets a window's collection behaviour
+    whenever it maps (shows) it.
+    """
+    if sys.platform != "darwin":
+        return
+    try:
+        from AppKit import NSApplication, NSWindowCollectionBehaviorMoveToActiveSpace
+        app = NSApplication.sharedApplication()
+        windows = [w for w in app.orderedWindows() if w.isVisible()]  # front to back
+        for window in windows:
+            window.setCollectionBehavior_(
+                window.collectionBehavior() | NSWindowCollectionBehaviorMoveToActiveSpace
+            )
+        for window in reversed(windows):  # back to front keeps their stacking
+            window.orderFront_(None)
+    except Exception:
+        pass
+
+
 def _visible_toplevels(widget):
     """Yield every visible, decorated toplevel below widget (not tooltips)."""
     for child in widget.winfo_children():
@@ -276,7 +303,12 @@ class RemoteManagerDash(DebugConsoleMixin, ctk.CTk):
         self.after(DISPLAY_POLL_MS, self._watch_displays)
 
     def _raise_and_activate(self):
-        """Raise the window above other apps' windows and give it focus."""
+        """Raise the window above other apps' windows and give it focus.
+
+        The window comes to the user's current desktop rather than taking
+        the user to the desktop it was on.
+        """
+        _join_current_desktop()
         self.lift()
         try:
             self.focus_force()
