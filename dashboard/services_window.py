@@ -24,6 +24,9 @@ class ServicesWindow(ctk.CTkToplevel):
     def __init__(self, master, core):
         """Build the grid and start the initial status fetch."""
         super().__init__(master)
+        # Stay hidden until sized: measuring the grid below makes Tk draw
+        # the window, which otherwise flashed up tiny before being resized.
+        self.withdraw()
         self.core = core
         self._ui_root = find_ui_root(self)
 
@@ -49,6 +52,7 @@ class ServicesWindow(ctk.CTkToplevel):
                 self, text="No machines have tracked services configured.",
                 text_color="gray"
             ).pack(padx=30, pady=30)
+            self.deiconify()
             return
 
         # Packed before the grid so the expanding grid can never squeeze it
@@ -111,6 +115,7 @@ class ServicesWindow(ctk.CTkToplevel):
         self.minsize(480, 240)
         # Keeps the window fully on that display.
         place_window(self, width, height, master.winfo_x() + 60, master.winfo_y() + 60, anchor=master)
+        self.deiconify()
 
         self.refresh_all()
 
