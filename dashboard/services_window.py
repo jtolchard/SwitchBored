@@ -8,6 +8,7 @@ import customtkinter as ctk
 from ui_components import ToolTip
 from .service_status import PENDING, batch_status_command, parse_batch_states
 from .ui_helpers import find_ui_root, schedule_on_ui_thread
+from .screens import place_window, screen_of
 
 
 class ServicesWindow(ctk.CTkToplevel):
@@ -101,15 +102,15 @@ class ServicesWindow(ctk.CTkToplevel):
         chrome_w = 90    # window padding + scrollbar
         chrome_h = 110   # paddings + bottom refresh bar
 
-        width = max(min(content_w + chrome_w, int(self.winfo_screenwidth() * 0.9)), 480)
-        height = max(min(content_h + chrome_h, int(self.winfo_screenheight() * 0.85)), 240)
-
-        # Keep the window fully on screen.
-        x = min(master.winfo_x() + 60, self.winfo_screenwidth() - width - 20)
-        y = min(master.winfo_y() + 60, self.winfo_screenheight() - height - 40)
+        # Cap to the dashboard's display, not the primary one, so the grid
+        # opens next to the dashboard when that sits on an external monitor.
+        _, _, screen_w, screen_h = screen_of(master)
+        width = max(min(content_w + chrome_w, int(screen_w * 0.9)), 480)
+        height = max(min(content_h + chrome_h, int(screen_h * 0.85)), 240)
 
         self.minsize(480, 240)
-        self.geometry(f"{width}x{height}+{max(x, 0)}+{max(y, 20)}")
+        # Keeps the window fully on that display.
+        place_window(self, width, height, master.winfo_x() + 60, master.winfo_y() + 60, anchor=master)
 
         self.refresh_all()
 
