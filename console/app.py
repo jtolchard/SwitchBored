@@ -3,7 +3,6 @@ import os
 import sys
 import time
 import queue
-import signal
 import socket
 import threading
 import subprocess
@@ -17,7 +16,7 @@ from console.dashboard_runtime import DashboardRuntime
 from console.restart import handle_restart
 from console.bootstrap import apply_macos_bundle_name, spawn_self
 from proc_env import clean_child_env
-from console.process_guard import acquire_console_lock, release_console_lock
+from console.process_guard import acquire_console_lock, release_console_lock, console_pid_path
 from console.updater import UpdateManager
 from version import APP_NAME, VERSION
 
@@ -523,41 +522,11 @@ class SysAdminConsole(rumps.App):
                 except Exception:
                     pass
 
-        pid_file = self.dashboard_runtime.dashboard_pid_file
-        proc = self.dashboard_runtime.dashboard_proc
-        if proc is not None and proc.poll() is None:
-            try:
-                # SIGTERM lets the dashboard save its window state and clean up.
-                proc.terminate()
-                proc.wait(timeout=2)
-            except Exception:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
+        self.dashboard_runtime.shutdown()
 
-        # Also clean up any surviving dashboard process recorded by PID file.
-        if os.path.exists(pid_file):
-            try:
-                with open(pid_file, "r") as f:
-                    pid = int(f.read().strip())
-
-                os.kill(pid, signal.SIGTERM)
-                for _ in range(20):
-                    time.sleep(0.1)
-                    try:
-                        os.kill(pid, 0)
-                    except ProcessLookupError:
-                        break
-                else:
-                    os.kill(pid, signal.SIGKILL)
-            except Exception:
-                pass
-            finally:
-                try:
-                    os.remove(pid_file)
-                except Exception:
-                    pass
+        # NSApp terminate ends the process with exit(), so the finally block
+        # in main() never runs; release the lock here or it goes stale.
+        release_console_lock(console_pid_path())
 
         rumps.quit_application()
 
