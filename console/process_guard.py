@@ -8,6 +8,65 @@ def app_support_path(filename: str) -> str:
     os.makedirs(base, exist_ok=True)
     return os.path.join(base, filename)
 
+def console_pid_path() -> str:
+    """Return the path of the console's single-instance lock file."""
+    return app_support_path("console.pid")
+
+def read_pid_file(path):
+    """Return the PID recorded in a PID file, or None if missing or invalid."""
+    try:
+        with open(path, "r") as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+
+def is_switchbored_process(pid, flag=None):
+    """Return True if pid is a live SwitchBored process.
+
+    PID files outlive their process whenever it exits without cleaning up
+    (macOS terminates the menu-bar app with exit(), and Cmd+Q or logout can
+    end the dashboard the same way), and macOS reuses PIDs, especially after
+    a reboot. Checking the command line keeps a stale file from blocking
+    startup, or from making us signal an unrelated process.
+
+    flag selects a child window process (e.g. "--dashboard"); without it,
+    only the menu-bar console matches.
+    """
+    if not pid or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return False  # alive, but owned by another user: not ours
+    except OSError:
+        return False
+
+    try:
+        res = subprocess.run(
+            ["ps", "-ww", "-o", "command=", "-p", str(pid)],
+            capture_output=True, text=True, timeout=2,
+        )
+    except Exception:
+        return False
+    command = res.stdout.strip()
+    if res.returncode != 0 or not command:
+        return False
+
+    # Match on the executable or script name, not any mention of the app:
+    # an editor with .../SwitchBored/core.py open must not count.
+    #   Bundle: .../SwitchBored.app/Contents/MacOS/SwitchBored [--flag]
+    #   Source: .../Python .../console.py [--flag]  (or dashboard.py)
+    args = command.split()
+    names = {os.path.basename(a) for a in args}
+
+    if flag == "--dashboard" and "dashboard.py" in names:
+        return True
+    if "SwitchBored" not in names and "console.py" not in names:
+        return False
+    if flag:
+        return flag in args
+    return "--dashboard" not in args and "--about" not in args
+
 def _notify_already_running():
     """Show a visible notice that another instance owns the lock.
 
@@ -27,41 +86,25 @@ def _notify_already_running():
 
 def acquire_console_lock():
     """Ensure only one SwitchBored console instance is running."""
-    pid_file = app_support_path("console.pid")
+    pid_file = console_pid_path()
 
-    if os.path.exists(pid_file):
-        try:
-            with open(pid_file, "r") as f:
-                old_pid = int(f.read().strip())
+    old_pid = read_pid_file(pid_file)
+    if old_pid and old_pid != os.getpid() and is_switchbored_process(old_pid):
+        print("SwitchBored is already running.")
+        _notify_already_running()
+        sys.exit(0)
 
-            # Check whether the recorded process is still alive.
-            os.kill(old_pid, 0)
-
-            # Bring the existing console instance to the foreground.
-            script = (
-                'tell application "System Events" '
-                'to tell (first process whose unix id is {}) to set frontmost to true'
-            ).format(old_pid)
-
-            os.system(f"osascript -e '{script}' > /dev/null 2>&1")
-
-            print("SwitchBored is already running.")
-            _notify_already_running()
-            sys.exit(0)
-
-        except (ProcessLookupError, ValueError, OSError):
-            # Stale or invalid PID file; remove it so a new instance can start.
-            try:
-                os.remove(pid_file)
-            except OSError:
-                pass
-
+    # Missing, stale, or pointing at a reused PID: take over the lock.
     with open(pid_file, "w") as f:
         f.write(str(os.getpid()))
 
     return pid_file
 
 def release_console_lock(pid_file):
-    """Remove the console PID lock file."""
-    if os.path.exists(pid_file):
+    """Remove the console PID lock file if it still belongs to this process."""
+    if read_pid_file(pid_file) != os.getpid():
+        return
+    try:
         os.remove(pid_file)
+    except OSError:
+        pass
