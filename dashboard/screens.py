@@ -13,7 +13,13 @@ top-left of the primary display, y increasing downwards.
 Rects use Tk geometry semantics: (x, y, width, height), where x/y is the
 window frame's top-left corner and width/height is the content size, which
 excludes the title bar.
+
+It also holds the helpers that keep windows on the desktop (Space) the
+user is working on.
 """
+
+import sys
+import time
 
 # Height of a standard macOS title bar, in points.
 TITLE_BAR_HEIGHT = 28
@@ -142,6 +148,91 @@ def ensure_window_on_screen(window):
     x, y, w, h = fitted
     window.geometry(f"{w}x{h}+{x}+{y}")
     return True
+
+
+def activate_app():
+    """Make this process the active app so its windows come to the front.
+
+    SwitchBored's windows are shown by background processes that macOS
+    does not activate on its own, so without this they can open behind
+    other apps.
+    """
+    if sys.platform != "darwin":
+        return
+    try:
+        from AppKit import NSApplication
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+    except Exception:
+        pass
+
+
+def bring_windows_to_current_desktop():
+    """Bring this process's visible windows to the desktop the user is on.
+
+    With MoveToActiveSpace set, ordering a window front pulls it onto the
+    current desktop (Space) instead of macOS switching the user to the
+    desktop it was on. Applied to every visible window so open child
+    windows come along.
+
+    Re-applied on every call: Tk resets a window's collection behaviour
+    whenever it maps (shows) it.
+    """
+    if sys.platform != "darwin":
+        return
+    try:
+        from AppKit import (
+            NSApplication,
+            NSWindowCollectionBehaviorCanJoinAllSpaces,
+            NSWindowCollectionBehaviorMoveToActiveSpace,
+        )
+        app = NSApplication.sharedApplication()
+        windows = [w for w in app.orderedWindows() if w.isVisible()]  # front to back
+    except Exception:
+        return
+
+    for window in windows:
+        behavior = window.collectionBehavior()
+        # Tk already shows child (transient) windows on every desktop, and
+        # macOS rejects MoveToActiveSpace on those with an exception.
+        if behavior & NSWindowCollectionBehaviorCanJoinAllSpaces:
+            continue
+        try:
+            window.setCollectionBehavior_(behavior | NSWindowCollectionBehaviorMoveToActiveSpace)
+        except Exception:
+            pass  # one odd window must not stop the others moving
+
+    for window in reversed(windows):  # back to front keeps their stacking
+        try:
+            window.orderFront_(None)
+        except Exception:
+            pass
+
+
+def hold_on_current_desktop(widget, seconds=3.0, interval_ms=200):
+    """For a few seconds, pull back any window macOS moves to another desktop.
+
+    If SwitchBored is assigned to one desktop (Dock > Options > Assign To),
+    macOS moves each new SwitchBored window to that desktop just after it
+    appears, undoing bring_windows_to_current_desktop(), so it opened out
+    of sight. That move happens only once, as the window first appears.
+    """
+    if sys.platform != "darwin":
+        return
+    deadline = time.monotonic() + seconds
+
+    def check():
+        try:
+            from AppKit import NSApplication
+            windows = NSApplication.sharedApplication().windows()
+            if any(w.isVisible() and not w.isOnActiveSpace() for w in windows):
+                bring_windows_to_current_desktop()
+                activate_app()
+            if time.monotonic() < deadline:
+                widget.after(interval_ms, check)
+        except Exception:
+            pass  # e.g. the window was closed meanwhile
+
+    widget.after(interval_ms, check)
 
 
 def place_window(window, width, height, x, y, anchor=None):
