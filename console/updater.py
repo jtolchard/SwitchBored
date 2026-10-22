@@ -16,6 +16,17 @@ API_LATEST = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 # Automatic checks run at most once per day.
 AUTO_CHECK_INTERVAL = 24 * 3600
 
+# Progress of an install requested from the dashboard's Updates tab, which
+# follows this file. States: checking, downloading, installing (the app is
+# about to restart), current, manual (download from the release page), and
+# failed. Without it the tab sat on "Downloading…" whenever an install
+# failed or was skipped.
+INSTALL_STATUS_FILE = "install_update_status.json"
+
+# How long an explicit install waits for an automatic check that is
+# already running, rather than dropping the request.
+INSTALL_LOCK_WAIT = 30
+
 # Runs detached after the app exits: swaps the bundle, relaunches, cleans up.
 INSTALL_SCRIPT = """#!/bin/bash
 PID="$1"; APP="$2"; NEW="$3"; STAGING="$4"
@@ -193,9 +204,15 @@ class UpdateManager:
         """Download and install the latest release without prompting.
 
         Triggered by the dashboard's Updates tab, where the user has already
-        chosen to install; call from a background thread.
+        chosen to install; call from a background thread. Every outcome is
+        reported back to the tab through INSTALL_STATUS_FILE.
         """
-        if not self._check_lock.acquire(blocking=False):
+        self._report_install("checking", "Checking the latest release…")
+
+        # The user asked for this, so wait out an automatic check that is
+        # already running instead of silently dropping the request.
+        if not self._check_lock.acquire(timeout=INSTALL_LOCK_WAIT):
+            self._report_install("failed", "Another update check is still running. Try again in a moment.")
             return
 
         try:
@@ -206,21 +223,36 @@ class UpdateManager:
                 self.core.log("UPDATER", f"Install check failed: {type(e).__name__}: {e}")
 
             if release is None:
-                self._alert("Update Failed", "Could not reach GitHub to download the update.")
+                self._report_install("failed", "Could not reach GitHub to download the update.")
                 return
 
             if release["version"] <= self.current_version:
+                self._report_install("current", "You are already running the latest version.")
                 return
 
             if not (is_frozen() and release["asset_url"]):
                 # Nothing to self-install (running from source, or no bundle
                 # attached); fall back to the release page.
+                self._report_install(
+                    "manual", f"Version {release['tag']} must be downloaded from the release page."
+                )
                 self._offer_update(release)
                 return
 
-            self._download_and_install(release)
+            self._download_and_install(release, from_dashboard=True)
         finally:
             self._check_lock.release()
+
+    def _report_install(self, state, message):
+        """Record install progress for the dashboard's Updates tab."""
+        path = self.core.runtime_path(INSTALL_STATUS_FILE)
+        tmp = path + ".tmp"
+        try:
+            with open(tmp, "w") as f:
+                json.dump({"state": state, "message": message, "time": time.time()}, f)
+            os.replace(tmp, path)
+        except OSError:
+            pass
 
     # ------------------------------------------------------------------
     # Prompting and installing
@@ -275,13 +307,18 @@ class UpdateManager:
 
         self.console.ui_call(prompt)
 
-    def _download_and_install(self, release):
-        """Download the release bundle, stage the swap, and restart the app."""
+    def _download_and_install(self, release, from_dashboard=False):
+        """Download the release bundle, stage the swap, and restart the app.
+
+        from_dashboard: the Updates tab shows failures itself, so no alert.
+        """
         app_path = bundle_path()
         if not app_path:
+            self._report_install("failed", "Could not locate the installed app bundle.")
             return
 
         try:
+            self._report_install("downloading", f"Downloading {release['tag']}…")
             staging = tempfile.mkdtemp(prefix="switchbored_update_")
             zip_path = os.path.join(staging, release["asset_name"])
 
@@ -312,11 +349,14 @@ class UpdateManager:
             )
 
             self.core.log("UPDATER", f"Update staged; restarting into {release['tag']}")
+            self._report_install("installing", "Installing — SwitchBored will restart in a moment.")
             self.console.ui_call(lambda: self.console.custom_quit(None))
 
         except Exception as e:
             self.core.log("UPDATER", f"Update failed: {type(e).__name__}: {e}")
-            self._alert("Update Failed", f"The update could not be installed:\n{e}")
+            self._report_install("failed", f"The update could not be installed: {e}")
+            if not from_dashboard:
+                self._alert("Update Failed", f"The update could not be installed:\n{e}")
 
     @staticmethod
     def _find_app_bundle(root):
