@@ -4,6 +4,7 @@ from tkinter import messagebox
 from ui_components import EmojiPicker, ToolTip
 from .admin_commands import AdminCommandEditor
 from .ui_helpers import find_ui_root, schedule_on_ui_thread
+from .screens import place_window, screen_of
 
 class MachineEditorWindow(ctk.CTkToplevel):
     """Editor window for creating or modifying a single machine entry."""
@@ -114,12 +115,14 @@ class MachineEditorWindow(ctk.CTkToplevel):
         ctk.CTkButton(btn_container, text="Cancel", fg_color="#555555", width=120, command=self.destroy).pack(side="left", padx=10)
         ctk.CTkButton(btn_container, text="Save Machine", fg_color="#2fa572", width=120, command=self.save).pack(side="left", padx=10)
 
-        # Size the window to its content and centre it on screen.
+        # Size the window to its content and centre it on the display the
+        # Settings window is on (not always the primary display).
         self.update_idletasks()
         window_height = self.winfo_reqheight()
-        center_x = int((self.winfo_screenwidth() / 2) - (window_width / 2))
-        center_y = int((self.winfo_screenheight() / 2) - (window_height / 2))
-        self.geometry(f"{window_width}x{window_height}+{center_x}+{center_y}")
+        sx, sy, sw, sh = screen_of(parent)
+        center_x = sx + (sw - window_width) // 2
+        center_y = sy + (sh - window_height) // 2
+        place_window(self, window_width, window_height, center_x, center_y, anchor=parent)
         self.deiconify()
 
     # --- UI HELPERS ---
