@@ -1,3 +1,4 @@
+import sys
 import webbrowser
 
 import customtkinter as ctk
@@ -19,6 +20,33 @@ def _load_icon_image(size=96):
         return ctk.CTkImage(light_image=img, dark_image=img, size=(size, size))
     except Exception:
         return None
+
+def _bring_to_current_desktop(title):
+    """Move the window to the desktop (Space) the user is on, and activate it.
+
+    This window belongs to a short-lived background process that never
+    activated itself, so macOS could place it on the desktop where
+    SwitchBored was last active and leave the user where they were: the
+    window opened, just out of sight.
+
+    Call after the window is shown: Tk resets the window's collection
+    behaviour when it maps it. With MoveToActiveSpace set, activating the
+    window pulls it onto the current desktop instead of switching desktops.
+    """
+    if sys.platform != "darwin":
+        return
+    try:
+        from AppKit import NSApplication, NSWindowCollectionBehaviorMoveToActiveSpace
+        app = NSApplication.sharedApplication()
+        for window in app.windows():
+            if window.title() == title:
+                window.setCollectionBehavior_(
+                    window.collectionBehavior() | NSWindowCollectionBehaviorMoveToActiveSpace
+                )
+                window.makeKeyAndOrderFront_(None)
+        app.activateIgnoringOtherApps_(True)
+    except Exception:
+        pass
 
 def show_about_window(app_name, version):
     """Display the About window and block until it is closed.
@@ -80,5 +108,13 @@ def show_about_window(app_name, version):
     y = (app.winfo_screenheight() // 2) - (height // 2)
     app.geometry(f"{width}x{height}+{x}+{y}")
 
+    # Show it invisibly first, so it is never seen on the wrong desktop,
+    # then move it to the user's desktop, in front, before revealing it.
+    app.attributes("-alpha", 0)
     app.deiconify()
+    app.update_idletasks()
+    _bring_to_current_desktop(f"About {app_name}")
+    app.lift()
+    app.focus_force()
+    app.attributes("-alpha", 1)
     app.mainloop()
