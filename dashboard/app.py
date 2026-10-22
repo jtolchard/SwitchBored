@@ -39,6 +39,12 @@ DISPLAY_POLL_MS = 2000
 # rather than one timeout per unreachable machine.
 STATUS_WORKERS = 16
 
+# The menu-bar app publishes its status results every ~5s (longer when
+# checks are slow). Older than this, it is assumed not to be running and the
+# dashboard checks machines itself, every SWEEP_INTERVAL seconds.
+SNAPSHOT_MAX_AGE = 15
+SWEEP_INTERVAL = 5
+
 
 def _activate_app():
     """Make this process the active app so its window comes to the front.
@@ -700,21 +706,63 @@ class RemoteManagerDash(DebugConsoleMixin, ctk.CTk):
 
     # --- BACKGROUND MONITORING ---
     def monitor(self):
-        """Run the background monitoring loop for reference and machine status checks.
+        """Keep the status dots and connectivity heartbeat current.
+
+        The menu-bar app already checks every machine every few seconds, and
+        while the dashboard is open it publishes those results; showing them
+        avoids pinging every machine twice. Only when they are missing or
+        stale (e.g. the dashboard was started on its own) does this check
+        machines itself.
 
         This runs on a worker thread and must never touch Tk directly; all UI
         updates are posted through ui_call() and applied on the main thread.
         """
+        last_snapshot = None
+        last_sweep = 0.0
+
         while not self.stop_event.is_set():
             self.settings = self.core.settings
 
-            self._update_reference_status()
-            self._ping_all_machine_rows()
+            snapshot = self.core.load_status_snapshot(max_age=SNAPSHOT_MAX_AGE)
+            if snapshot is not None:
+                if snapshot["updated"] != last_snapshot:
+                    last_snapshot = snapshot["updated"]
+                    self._apply_status_snapshot(snapshot)
+            elif time.monotonic() - last_sweep >= SWEEP_INTERVAL:
+                self._update_reference_status()
+                self._ping_rows(self._checkable_rows())
+                last_sweep = time.monotonic()
 
-            for _ in range(50):
+            # Look for a fresh snapshot about once a second.
+            for _ in range(10):
                 if self.stop_event.is_set():
                     break
                 time.sleep(0.1)
+
+    def _apply_status_snapshot(self, snapshot):
+        """Show the menu-bar app's results; check anything they don't cover."""
+        if not self.settings.get("use_ref_server", True):
+            self._set_reference_status_label("")
+        else:
+            reference = snapshot.get("reference") or {}
+            if reference.get("target") == self.settings.get("ref_server", "1.1.1.1"):
+                self._show_reference_latency(reference.get("latency"))
+            else:
+                self._update_reference_status()
+
+        known = snapshot["machines"]
+        missing = []
+        for row in self._checkable_rows():
+            data = row["data"]
+            key = self.core.status_key(data["address"], data.get("port") or 22)
+            if key in known:
+                self.ui_call(lambda r=row, l=known[key]: self.update_row_status(r, l))
+            else:
+                # e.g. a machine added since the menu bar last rebuilt.
+                missing.append(row)
+
+        if missing:
+            self._ping_rows(missing)
 
     def _update_reference_status(self):
         """Check the reference server and update the status bar."""
@@ -723,8 +771,10 @@ class RemoteManagerDash(DebugConsoleMixin, ctk.CTk):
             return
 
         target = self.settings.get("ref_server", "1.1.1.1")
-        latency = self.core.check_status(target)
+        self._show_reference_latency(self.core.check_status(target))
 
+    def _show_reference_latency(self, latency):
+        """Show a reference-server result in the status bar."""
         if latency is not None:
             self._set_reference_status_label("Network Connection: Online ✅", "#2fa572")
         else:
@@ -742,16 +792,19 @@ class RemoteManagerDash(DebugConsoleMixin, ctk.CTk):
 
         self.ui_call(apply)
 
-    def _ping_all_machine_rows(self):
-        """Check every machine in parallel and schedule safe row-status updates.
+    def _checkable_rows(self):
+        """Return the rows that have an address to check."""
+        # Copy: refresh_machines() may replace the list on the main thread.
+        return [r for r in list(getattr(self, "machine_rows", [])) if r["data"].get("address")]
+
+    def _ping_rows(self, rows):
+        """Check machines in parallel and schedule safe row-status updates.
 
         Checked one at a time, each unreachable machine cost up to two
         seconds (ping timeout plus TCP fallback), so with a few offline
         machines the dots further down the list took tens of seconds to
         fill in after the dashboard opened.
         """
-        # Snapshot: refresh_machines() may replace the list on the main thread.
-        rows = [r for r in list(getattr(self, "machine_rows", [])) if r["data"].get("address")]
         if not rows:
             return
 
