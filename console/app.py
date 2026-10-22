@@ -456,25 +456,30 @@ class SysAdminConsole(rumps.App):
             """Perform one full batch of background status checks."""
             try:
                 threads = []
+                # Latencies for the shared snapshot the dashboard reads.
+                latencies = {}
+                reference = {}
 
                 if self.core.settings.get("use_ref_server", True):
                     target = self.core.settings.get("ref_server", "1.1.1.1")
                     def check_ref():
                         lat = self.core.check_status(target)
                         self.reference_status = (lat is not None)
-                    
+                        reference.update(target=target, latency=lat)
+
                     t_ref = threading.Thread(target=check_ref, daemon=True)
                     t_ref.start()
                     threads.append(t_ref)
-                    
+
                 if hasattr(self, 'menu_lookup'):
                     for index, data in list(self.menu_lookup.items()):
                         def check_machine(idx=index, addr=data["address"], port=data.get("port")):
-                            is_online = self.core.check_status(addr, port=port) is not None
+                            latency = self.core.check_status(addr, port=port)
                             # Never touch the menu from a worker thread; queue
                             # the result for the main-thread UI timer.
                             with self._status_lock:
-                                self._pending_status[idx] = is_online
+                                self._pending_status[idx] = latency is not None
+                            latencies[self.core.status_key(addr, port)] = latency
 
                         t_mac = threading.Thread(target=check_machine, daemon=True)
                         t_mac.start()
@@ -483,6 +488,11 @@ class SysAdminConsole(rumps.App):
                 # Wait briefly for all checks in this batch to complete.
                 for t in threads:
                     t.join(timeout=4.0)
+
+                # Only while a dashboard is open; it falls back to its own
+                # checks when the snapshot is missing or stale.
+                if os.path.exists(self.dashboard_runtime.dashboard_pid_file):
+                    self.core.save_status_snapshot(dict(latencies), dict(reference) or None)
 
             finally:
                 self.worker_lock.release()
