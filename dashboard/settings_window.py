@@ -11,6 +11,7 @@ from .machine_editor import MachineEditorWindow
 from .dialogs import ConfirmationDialog
 from .ssh_keys import SSHKeyAssistant
 from .ui_helpers import center_window_over_parent, find_ui_root, schedule_on_ui_thread
+from .screens import TITLE_BAR_HEIGHT, place_window, screen_of, window_rect
 from console.updater import fetch_latest_release, parse_version, is_frozen
 from version import VERSION
 
@@ -22,8 +23,16 @@ class SettingsWindow(ctk.CTkToplevel):
         super().__init__(master)
         
         self.title("General Settings")
-        self.geometry("600x790")
-        self.minsize(600, 790)
+
+        # Open over the dashboard on its display, and never taller than
+        # that display, so the Save button can't end up below the Dock or
+        # off-screen on smaller screens.
+        width, height = 600, 790
+        _, _, _, screen_h = screen_of(master)
+        height = min(height, screen_h - TITLE_BAR_HEIGHT)
+        self.minsize(width, height)
+        mx, my, mw, _ = window_rect(master)
+        place_window(self, width, height, mx + (mw - width) // 2, my, anchor=master)
 
         # Transient keeps this window above the dashboard without the
         # stacking glitches that -topmost toggling causes on macOS.
@@ -432,7 +441,11 @@ class SettingsWindow(ctk.CTkToplevel):
             command=self.confirm_reset_app_data
         ).pack(anchor="w", padx=15, pady=(0, 12))
 
-        ctk.CTkButton(self, text="Save & Apply All Settings", fg_color="#2fa572", height=40, command=self.save_all).pack(pady=(0, 10), fill="x", padx=20)
+        # Packed ahead of the tabs so that, when the window is shorter than
+        # its content, the tabs shrink (they scroll) rather than the button.
+        ctk.CTkButton(self, text="Save & Apply All Settings", fg_color="#2fa572", height=40, command=self.save_all).pack(
+            side="bottom", before=self.tabs, pady=(0, 10), fill="x", padx=20
+        )
 
     def _on_tab_selected(self):
         """React to tab changes; the Updates tab checks on each visit."""
@@ -1024,5 +1037,9 @@ class SettingsWindow(ctk.CTkToplevel):
             popup.destroy()
             self.master.refresh_machines()
             self.destroy()
-                    
+
+        # Closing the popup with its title-bar button must apply the saved
+        # settings too; otherwise the dashboard and menu bar stay stale.
+        popup.protocol("WM_DELETE_WINDOW", on_ok)
+
         ctk.CTkButton(border_frame, text="OK", width=100, text_color="#ffffff", fg_color="#2fa572", hover_color="#25885c", command=on_ok).pack(pady=(0, 20))
