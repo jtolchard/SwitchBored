@@ -1,9 +1,11 @@
 import os
 import json
 import copy
+import time
 import uuid
 import threading
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from ui_components import ToolTip, EmojiPicker, PluginManagerWidget
@@ -12,8 +14,12 @@ from .dialogs import ConfirmationDialog
 from .ssh_keys import SSHKeyAssistant
 from .ui_helpers import center_window_over_parent, find_ui_root, schedule_on_ui_thread
 from .screens import TITLE_BAR_HEIGHT, place_window, screen_of, window_rect
-from console.updater import fetch_latest_release, parse_version, is_frozen
+from console.updater import fetch_latest_release, parse_version, is_frozen, INSTALL_STATUS_FILE
 from version import VERSION
+
+# How long to wait for the menu-bar app to acknowledge an install request
+# (it checks for one every second).
+INSTALL_REPLY_TIMEOUT = 10
 
 class SettingsWindow(ctk.CTkToplevel):
     """Top-level settings window for global options, machines, and plugins."""
@@ -81,6 +87,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self.tab_updates = self.tabs.add("Updates")
 
         self._update_check_running = False
+        self._install_in_progress = False
 
         # ------------------------------------------------------------------
         # Machines tab
@@ -472,7 +479,8 @@ class SettingsWindow(ctk.CTkToplevel):
 
     def run_update_check(self):
         """Check GitHub for a newer release and show its notes in the tab."""
-        if self._update_check_running:
+        # Revisiting the tab mid-install must not reset the install button.
+        if self._update_check_running or self._install_in_progress:
             return
         self._update_check_running = True
         self.update_status_lbl.configure(text="Checking for updates…", text_color="gray")
@@ -529,6 +537,13 @@ class SettingsWindow(ctk.CTkToplevel):
 
     def _start_update_install(self):
         """Ask the menu-bar app to download and install the available update."""
+        status_path = self.core.runtime_path(INSTALL_STATUS_FILE)
+        try:
+            # Only follow progress reported for this request.
+            os.remove(status_path)
+        except OSError:
+            pass
+
         try:
             with open(self.core.runtime_path("install_update.flag"), "w") as f:
                 f.write("1")
@@ -538,11 +553,66 @@ class SettingsWindow(ctk.CTkToplevel):
             )
             return
 
-        self.update_install_btn.configure(state="disabled", text="Downloading…")
-        self.update_status_lbl.configure(
-            text="Update started — the app will restart when it is ready.",
-            text_color="#2fa572",
-        )
+        self._install_in_progress = True
+        self.update_install_btn.configure(state="disabled", text="Starting…")
+        self.update_status_lbl.configure(text="Asking SwitchBored to install the update…", text_color="gray")
+
+        # The menu-bar app picks the request up within a second; if nothing
+        # arrives by then, it isn't running.
+        self._install_reply_deadline = time.monotonic() + INSTALL_REPLY_TIMEOUT
+        self.after(500, self._poll_install_status)
+
+    def _poll_install_status(self):
+        """Follow the install request until the menu-bar app reports an outcome."""
+        if not self.winfo_exists():
+            return
+
+        try:
+            with open(self.core.runtime_path(INSTALL_STATUS_FILE)) as f:
+                status = json.load(f)
+        except (OSError, ValueError):
+            status = None
+
+        if status is None:
+            if time.monotonic() < self._install_reply_deadline:
+                self.after(500, self._poll_install_status)
+                return
+            # Withdraw the request so it doesn't fire whenever the menu-bar
+            # app next starts.
+            try:
+                os.remove(self.core.runtime_path("install_update.flag"))
+            except OSError:
+                pass
+            self._finish_install("SwitchBored's menu bar app didn't respond. "
+                                 "Make sure it is running, then try again.", "#d48806", retry=True)
+            return
+
+        state = status.get("state")
+        message = status.get("message", "")
+
+        if state in ("checking", "downloading"):
+            self.update_status_lbl.configure(text=message, text_color="gray")
+            self.update_install_btn.configure(text="Downloading…" if state == "downloading" else "Checking…")
+            self.after(500, self._poll_install_status)
+        elif state == "installing":
+            # The app quits and relaunches from here; nothing more to follow.
+            self.update_status_lbl.configure(text=message, text_color="#2fa572")
+            self.update_install_btn.configure(text="Installing…")
+        elif state == "current":
+            self._finish_install(message, "#2fa572", retry=False)
+        elif state == "manual":
+            self._finish_install(message, "#3B8ED0", retry=False)
+        else:
+            self._finish_install(message or "The update could not be installed.", "#e74c3c", retry=True)
+
+    def _finish_install(self, message, color, retry):
+        """Show an install outcome; offer the button again only if retrying makes sense."""
+        self._install_in_progress = False
+        self.update_status_lbl.configure(text=message, text_color=color)
+        if retry:
+            self.update_install_btn.configure(state="normal", text="Try Again")
+        else:
+            self.update_install_btn.pack_forget()
 
     def confirm_reset_app_data(self):
         """Ask for typed confirmation before wiping all saved settings."""
@@ -688,26 +758,50 @@ class SettingsWindow(ctk.CTkToplevel):
             self.show_key_selection_dialog(keys, machines, term_type)
 
     def prepare_deployment(self, key_path, machines, term_type):
-        """Filter deployment targets and show a confirmation dialog before starting."""
-        reachable_ssh = []
+        """Find reachable SSH machines in the background, then confirm.
+
+        The checks used to run one by one on the UI thread, freezing the
+        window for up to ~2s per offline machine before the dialog appeared.
+        """
         no_ssh_skipped = 0
-        offline_skipped = 0
-        
+        no_address = 0
+        candidates = []
         for m in machines:
             if "SSH" not in m.get("connections", ["SSH", "TMUX", "SFTP", "VNC"]):
                 no_ssh_skipped += 1
-                continue
-                
-            ip = m.get('address')
-            if not ip:
-                offline_skipped += 1
-                continue
-                
-            if self.core.check_status(ip, port=m.get("port") or 22) is not None:
-                reachable_ssh.append(m)
+            elif not m.get("address"):
+                no_address += 1
             else:
-                offline_skipped += 1
-                
+                candidates.append(m)
+
+        self.deploy_key_btn.configure(state="disabled", text="Checking…")
+        self.ssh_status_lbl.configure(
+            text=f"Checking which of {len(candidates)} machines are reachable…", text_color="gray"
+        )
+
+        def is_up(m):
+            return self.core.check_status(m["address"], port=m.get("port") or 22) is not None
+
+        def worker():
+            reachable = []
+            if candidates:
+                with ThreadPoolExecutor(max_workers=min(16, len(candidates))) as pool:
+                    reachable = [m for m, up in zip(candidates, pool.map(is_up, candidates)) if up]
+            offline = no_address + len(candidates) - len(reachable)
+
+            def show():
+                if not self.winfo_exists():
+                    return
+                self.deploy_key_btn.configure(text="Deploy to All")
+                self.check_ssh_keys()  # restores the status label and button state
+                self._confirm_deployment(key_path, reachable, no_ssh_skipped, offline, term_type)
+
+            schedule_on_ui_thread(self._ui_root, show)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _confirm_deployment(self, key_path, reachable_ssh, no_ssh_skipped, offline_skipped, term_type):
+        """Show the deployment summary and start it on confirmation."""
         hud = ctk.CTkToplevel(self)
         hud.title("Confirm Deployment")
         hud.geometry("450x340")
