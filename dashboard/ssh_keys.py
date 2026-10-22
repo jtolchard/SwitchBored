@@ -77,4 +77,6 @@ class SSHKeyAssistant:
                 end tell
             end run
             '''
-        subprocess.run(["osascript", "-e", ascript, full_shell_command], env=clean_child_env())
+        # Popen, not run: waiting for osascript means waiting for Terminal or
+        # iTerm to launch, which froze the Settings window meanwhile.
+        subprocess.Popen(["osascript", "-e", ascript, full_shell_command], env=clean_child_env())
