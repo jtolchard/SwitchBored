@@ -26,8 +26,18 @@ for _ in $(seq 1 120); do
     sleep 0.5
 done
 
-rm -rf "$APP"
-ditto "$NEW" "$APP"
+# Keep the old bundle until the new one is fully in place, so a failed copy
+# (full disk, permissions) leaves the working app rather than no app.
+BACKUP="$APP.previous"
+rm -rf "$BACKUP"
+if mv "$APP" "$BACKUP"; then
+    if ditto "$NEW" "$APP"; then
+        rm -rf "$BACKUP"
+    else
+        rm -rf "$APP"
+        mv "$BACKUP" "$APP"
+    fi
+fi
 open "$APP"
 rm -rf "$STAGING"
 """
