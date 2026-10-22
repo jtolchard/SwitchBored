@@ -19,7 +19,14 @@ from .machine_details import MachineDetailsWindow
 from .services_window import ServicesWindow
 from .settings_window import SettingsWindow
 from .dialogs import show_error_dialog
-from .screens import visible_screen_rects, fit_to_screens, ensure_window_on_screen
+from .screens import (
+    visible_screen_rects,
+    fit_to_screens,
+    ensure_window_on_screen,
+    activate_app,
+    bring_windows_to_current_desktop,
+    hold_on_current_desktop,
+)
 from .ui_helpers import (
     extract_ordered_tags,
     get_machine_tags,
@@ -44,49 +51,6 @@ STATUS_WORKERS = 16
 # dashboard checks machines itself, every SWEEP_INTERVAL seconds.
 SNAPSHOT_MAX_AGE = 15
 SWEEP_INTERVAL = 5
-
-
-def _activate_app():
-    """Make this process the active app so its window comes to the front.
-
-    The dashboard is started directly rather than through LaunchServices,
-    so macOS does not activate it on launch, and a menu-bar click does not
-    activate it later; without this its window can open behind other apps.
-    """
-    if sys.platform != "darwin":
-        return
-    try:
-        from AppKit import NSApplication
-        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
-    except Exception:
-        pass
-
-
-def _join_current_desktop():
-    """Bring this process's visible windows to the desktop the user is on.
-
-    With MoveToActiveSpace set, activating a window pulls it onto the
-    current desktop (Space) instead of macOS switching the user back to
-    the desktop it was left on. Applied to every visible window so open
-    Settings or Details windows come along with the dashboard.
-
-    Re-applied on every call: Tk resets a window's collection behaviour
-    whenever it maps (shows) it.
-    """
-    if sys.platform != "darwin":
-        return
-    try:
-        from AppKit import NSApplication, NSWindowCollectionBehaviorMoveToActiveSpace
-        app = NSApplication.sharedApplication()
-        windows = [w for w in app.orderedWindows() if w.isVisible()]  # front to back
-        for window in windows:
-            window.setCollectionBehavior_(
-                window.collectionBehavior() | NSWindowCollectionBehaviorMoveToActiveSpace
-            )
-        for window in reversed(windows):  # back to front keeps their stacking
-            window.orderFront_(None)
-    except Exception:
-        pass
 
 
 def _visible_toplevels(widget):
@@ -308,13 +272,14 @@ class RemoteManagerDash(DebugConsoleMixin, ctk.CTk):
         The window comes to the user's current desktop rather than taking
         the user to the desktop it was on.
         """
-        _join_current_desktop()
+        bring_windows_to_current_desktop()
         self.lift()
         try:
             self.focus_force()
         except tkinter.TclError:
             pass
-        _activate_app()
+        activate_app()
+        hold_on_current_desktop(self)
 
     def bring_to_front(self):
         """Show the window where the user can see it ('Open Dashboard')."""
