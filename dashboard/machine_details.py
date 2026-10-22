@@ -6,6 +6,7 @@ import customtkinter as ctk
 from ui_components import ToolTip
 from .service_status import parse_service_state
 from .ui_helpers import find_ui_root, schedule_on_ui_thread
+from .screens import place_window
 
 class MachineDetailsWindow(ctk.CTkToplevel):
     """Details window for a single machine, including status, services, logs, and admin actions."""
@@ -115,15 +116,17 @@ class MachineDetailsWindow(ctk.CTkToplevel):
         self.withdraw()
         self.update_idletasks()
         
-        natural_width = 550 
-        natural_height = self.winfo_reqheight() 
-        
-        x = master.winfo_x() + 50
-        y = master.winfo_y() + 50
-        
-        self.minsize(natural_width, natural_height)
-        self.geometry(f"{natural_width}x{natural_height}+{x}+{y}")
-        
+        natural_width = 550
+        natural_height = self.winfo_reqheight()
+
+        # Offset from the dashboard, but kept on its display: with many
+        # services the natural height could run off the bottom edge.
+        _, _, width, height = place_window(
+            self, natural_width, natural_height,
+            master.winfo_x() + 50, master.winfo_y() + 50, anchor=master,
+        )
+        self.minsize(width, height)
+
         self.deiconify()
 
     def schedule_refresh(self):
