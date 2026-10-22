@@ -27,7 +27,11 @@ class SettingsWindow(ctk.CTkToplevel):
     def __init__(self, master, core):
         """Build the settings UI and populate it from the current core settings."""
         super().__init__(master)
-        
+        # Stay hidden while being built and placed. Measuring the dashboard
+        # (below) makes Tk draw pending windows, which otherwise showed this
+        # one briefly as a small empty square before it was sized.
+        self.withdraw()
+
         self.title("General Settings")
 
         # Open over the dashboard on its display, and never taller than
@@ -43,8 +47,6 @@ class SettingsWindow(ctk.CTkToplevel):
         # Transient keeps this window above the dashboard without the
         # stacking glitches that -topmost toggling causes on macOS.
         self.transient(master)
-        self.lift()
-        self.focus_force()
 
 
         self.master = master
@@ -453,6 +455,11 @@ class SettingsWindow(ctk.CTkToplevel):
         ctk.CTkButton(self, text="Save & Apply All Settings", fg_color="#2fa572", height=40, command=self.save_all).pack(
             side="bottom", before=self.tabs, pady=(0, 10), fill="x", padx=20
         )
+
+        # Built and placed: show it once, at its final size and position.
+        self.deiconify()
+        self.lift()
+        self.focus_force()
 
     def _on_tab_selected(self):
         """React to tab changes; the Updates tab checks on each visit."""
