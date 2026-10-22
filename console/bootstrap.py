@@ -23,6 +23,23 @@ def _frozen_launcher():
         name = "SwitchBored"
     return os.path.join(contents, "MacOS", name)
 
+def find_app_icon():
+    """Return the app icon's path, preferring the bundle's Resources copy."""
+    candidates = []
+
+    resources = os.environ.get("RESOURCEPATH")
+    if resources:
+        candidates.append(os.path.join(resources, "icon.icns"))
+
+    project_root = Path(__file__).resolve().parent.parent
+    candidates.append(str(project_root / "icon.png"))
+    candidates.append(str(project_root / "icon.icns"))
+
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
+
 def spawn_self(*extra_args):
     """Launch another instance of this application with the given arguments.
 
