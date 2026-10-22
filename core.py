@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import time
+import shlex
 import socket
 import getpass
 import platform
@@ -194,22 +195,29 @@ class MachineManagerCore:
         }
 
     def get_ssh_string(self, machine):
-        """Return a standard SSH target string in the form user@host -p port."""
-        user = machine.get("user") or getpass.getuser()
-        addr = machine.get("address", "")
-        port = machine.get("port") or "22"
-        return f"{user}@{addr} -p {port}"
+        """Return shell-quoted SSH arguments: -p port -- user@host.
+
+        The result is pasted into a Terminal command line, so each value is
+        quoted (spaces or ; in a field can't break or extend the command),
+        and -- stops a user or address that starts with '-' from being read
+        as an ssh option. Ordinary values need no quoting and appear as typed.
+        """
+        user = str(machine.get("user") or getpass.getuser()).strip()
+        addr = str(machine.get("address", "")).strip()
+        port = str(machine.get("port") or "22").strip()
+        return f"-p {shlex.quote(port)} -- {shlex.quote(f'{user}@{addr}')}"
 
     def _ssh_argv(self, machine, command):
         """Build an argv list for running a remote command over SSH."""
-        user = machine.get("user") or getpass.getuser()
-        addr = machine.get("address", "")
-        port = str(machine.get("port") or "22")
+        user = str(machine.get("user") or getpass.getuser()).strip()
+        addr = str(machine.get("address", "")).strip()
+        port = str(machine.get("port") or "22").strip()
         return [
             "ssh",
             "-o", "ConnectTimeout=3",
             "-o", "BatchMode=yes",
             "-p", port,
+            "--",  # a destination starting with '-' must not parse as an option
             f"{user}@{addr}",
             command,
         ]
@@ -245,7 +253,7 @@ class MachineManagerCore:
         ssh_str = self.get_ssh_string(machine)
         # This command checks if 'main' exists, attaches if it does, creates if not
         tmux_cmd = "tmux attach-session -t main || tmux new-session -s main"
-        return f"ssh -t {ssh_str} '{tmux_cmd}'"
+        return f"ssh -t {ssh_str} {shlex.quote(tmux_cmd)}"
 
     def check_status(self, address, timeout=1.0, port=None):
         """Ping a host and return latency in seconds, or None if it is unreachable.
@@ -274,6 +282,46 @@ class MachineManagerCore:
 
         self.log("NETWORK", f"Ping failed for {address}")
         return None
+
+    # --- Shared status snapshot -------------------------------------------
+    # The menu-bar console already checks every machine every few seconds.
+    # While a dashboard is open it publishes those results here, so the
+    # dashboard can show them instead of pinging everything a second time.
+
+    @staticmethod
+    def status_key(address, port):
+        """Return the key identifying one machine check in the snapshot."""
+        return f"{str(address).strip()}:{str(port or 22).strip()}"
+
+    def status_snapshot_path(self):
+        """Return the path of the shared status snapshot file."""
+        name = "machine_status_test.json" if self.test_mode else "machine_status.json"
+        return self.runtime_path(name)
+
+    def save_status_snapshot(self, machines, reference=None):
+        """Atomically publish {status_key: latency or None} plus the reference result."""
+        path = self.status_snapshot_path()
+        tmp = path + ".tmp"
+        try:
+            with open(tmp, "w") as f:
+                json.dump({"updated": time.time(), "reference": reference, "machines": machines}, f)
+            os.replace(tmp, path)
+        except OSError:
+            pass
+
+    def load_status_snapshot(self, max_age):
+        """Return the snapshot if it is newer than max_age seconds, else None."""
+        try:
+            with open(self.status_snapshot_path()) as f:
+                snapshot = json.load(f)
+        except (OSError, ValueError):
+            return None
+        if not isinstance(snapshot, dict) or not isinstance(snapshot.get("machines"), dict):
+            return None
+        updated = snapshot.get("updated")
+        if not isinstance(updated, (int, float)) or time.time() - updated > max_age:
+            return None
+        return snapshot
 
     def log(self, category, message):
         """Write a formatted debug log entry to the callback and shared log file."""
