@@ -5,10 +5,13 @@ import queue
 import signal
 import threading
 import tkinter
+from concurrent.futures import ThreadPoolExecutor
 import customtkinter as ctk
 from core import MachineManagerCore
 from actions import ActionManager
 from console.bootstrap import spawn_self
+from console.dashboard_runtime import SHOW_SIGNAL
+from console.process_guard import read_pid_file, is_switchbored_process
 from version import APP_NAME
 from ui_components import ToolTip, enable_trackpad_scrolling
 from .debug_console import DebugConsoleMixin
@@ -16,6 +19,7 @@ from .machine_details import MachineDetailsWindow
 from .services_window import ServicesWindow
 from .settings_window import SettingsWindow
 from .dialogs import show_error_dialog
+from .screens import visible_screen_rects, fit_to_screens, ensure_window_on_screen
 from .ui_helpers import (
     extract_ordered_tags,
     get_machine_tags,
@@ -26,6 +30,43 @@ from .ui_helpers import (
     DISABLED_CONNECTION_BUTTON_STYLE,
     DASHBOARD_LAYOUT,
 )
+
+# How often to check whether the display layout changed (monitor plugged or
+# unplugged), in ms. Reading NSScreen is cheap.
+DISPLAY_POLL_MS = 2000
+
+# Machines are checked in parallel, so one sweep takes about one timeout
+# rather than one timeout per unreachable machine.
+STATUS_WORKERS = 16
+
+
+def _activate_app():
+    """Make this process the active app so its window comes to the front.
+
+    The dashboard is started directly rather than through LaunchServices,
+    so macOS does not activate it on launch, and a menu-bar click does not
+    activate it later; without this its window can open behind other apps.
+    """
+    if sys.platform != "darwin":
+        return
+    try:
+        from AppKit import NSApplication
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+    except Exception:
+        pass
+
+
+def _visible_toplevels(widget):
+    """Yield every visible, decorated toplevel below widget (not tooltips)."""
+    for child in widget.winfo_children():
+        if isinstance(child, tkinter.Toplevel):
+            try:
+                if child.winfo_viewable() and not child.wm_overrideredirect():
+                    yield child
+            except tkinter.TclError:
+                continue
+        yield from _visible_toplevels(child)
+
 
 def _load_services_icon(size=20):
     """Return the services toolbar icon as a CTkImage, or None for the fallback glyph.
@@ -65,6 +106,8 @@ class RemoteManagerDash(DebugConsoleMixin, ctk.CTk):
         self.machines = self.settings.get("machines", [])
         self.stop_event = threading.Event()
         self._ui_queue = queue.Queue()
+        self._revealed = False
+        self._screen_rects = []
 
         # Plugins that extend dashboard windows (e.g. usb_block) implement
         # on_machine_details / on_machine_editor and are dispatched via
@@ -101,7 +144,11 @@ class RemoteManagerDash(DebugConsoleMixin, ctk.CTk):
         self.toggle_debug_console()
 
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
-        
+
+        # Must happen before the PID file is written: the console only
+        # signals a dashboard whose PID file exists.
+        self._install_lifecycle_handlers()
+
         try:
             pid_path = self.core.runtime_path("dashboard.pid")
             with open(pid_path, "w") as f:
@@ -135,6 +182,27 @@ class RemoteManagerDash(DebugConsoleMixin, ctk.CTk):
             self.config(menu=menubar)
         except Exception:
             pass
+
+    def _install_lifecycle_handlers(self):
+        """Route quit requests and the console's 'show' signal through Tk.
+
+        Python runs signal handlers between bytecodes on the main thread;
+        the queue-drain 'after' loop guarantees that happens promptly.
+        """
+        # Cmd+Q, the app menu's Quit and logout send a quit Apple Event.
+        # Tk's default reaction is to exit at once, skipping on_closing, so
+        # the window position was never saved and the PID file went stale.
+        if sys.platform == "darwin":
+            try:
+                self.createcommand("::tk::mac::Quit", self.on_closing)
+            except Exception:
+                pass
+
+        # The console asks us to quit with SIGTERM; close cleanly so window
+        # geometry is saved and the PID file is removed.
+        signal.signal(signal.SIGTERM, lambda *_: self.after(0, self.on_closing))
+        # "Open Dashboard" while we're already running.
+        signal.signal(SHOW_SIGNAL, lambda *_: self.after(0, self.bring_to_front))
 
     def plugin_hook(self, hook_name, *args, **kwargs):
         """Call a named hook on each loaded plugin that implements it.
@@ -188,10 +256,68 @@ class RemoteManagerDash(DebugConsoleMixin, ctk.CTk):
         )
         self.filter_machines(initial_choice)
 
-        self.geometry(f"{saved_w}x{final_h}+{pos_x}+{pos_y}")
+        # The saved position may be on a monitor that is no longer attached.
+        self._screen_rects = visible_screen_rects(self)
+        x, y, w, h = fit_to_screens((pos_x, pos_y, saved_w, final_h), self._screen_rects)
+
+        self.geometry(f"{w}x{h}+{x}+{y}")
         self.deiconify()
         self.attributes("-alpha", 1)
+        self._revealed = True
         self.truncate_names()
+        self._raise_and_activate()
+
+        self.after(DISPLAY_POLL_MS, self._watch_displays)
+
+    def _raise_and_activate(self):
+        """Raise the window above other apps' windows and give it focus."""
+        self.lift()
+        try:
+            self.focus_force()
+        except tkinter.TclError:
+            pass
+        _activate_app()
+
+    def bring_to_front(self):
+        """Show the window where the user can see it ('Open Dashboard')."""
+        if getattr(self, "_closing", False) or not self._revealed:
+            return  # still starting: launch_snap reveals and activates it
+        try:
+            if self.state() == "iconic":
+                self.deiconify()
+            if ensure_window_on_screen(self):
+                self.core.log("UI", "Dashboard was out of reach; moved it back on screen")
+            self._raise_and_activate()
+        except tkinter.TclError:
+            pass
+
+    def _watch_displays(self):
+        """Watch for display changes, such as a monitor being unplugged."""
+        if self.stop_event.is_set():
+            return
+        try:
+            rects = visible_screen_rects(self)
+            if rects and rects != self._screen_rects:
+                self._screen_rects = rects
+                self.core.log("UI", f"Display layout changed: {rects}")
+                # Give macOS a moment to finish rearranging windows first.
+                self.after(500, self._recover_windows)
+        except Exception:
+            pass
+        self.after(DISPLAY_POLL_MS, self._watch_displays)
+
+    def _recover_windows(self):
+        """Move this window and its open child windows back within reach."""
+        if self.stop_event.is_set():
+            return
+        windows = [self] if self.state() != "iconic" else []
+        windows.extend(_visible_toplevels(self))
+        for win in windows:
+            try:
+                if ensure_window_on_screen(win):
+                    self.core.log("UI", f"Moved '{win.title()}' back on screen after a display change")
+            except tkinter.TclError:
+                continue
 
     def _get_display_count_for_current_filter(self):
         """Return the number of machines visible under the current startup filter."""
@@ -534,9 +660,11 @@ class RemoteManagerDash(DebugConsoleMixin, ctk.CTk):
         if event.widget == self:
             if event.width > 100 and event.height > 100:
                 self.truncate_names()
-                
-                self.settings["last_x"] = self.winfo_x()
-                self.settings["last_y"] = self.winfo_y()
+
+                # The event carries the new position; winfo_x()/winfo_y()
+                # still report the previous one while the handler runs.
+                self.settings["last_x"] = event.x
+                self.settings["last_y"] = event.y
                 
                 if self.settings.get("remember_filter", False):
                     self.settings["last_w"] = event.width
@@ -615,23 +743,27 @@ class RemoteManagerDash(DebugConsoleMixin, ctk.CTk):
         self.ui_call(apply)
 
     def _ping_all_machine_rows(self):
-        """Ping each machine and schedule a safe row-status update."""
-        if not hasattr(self, "machine_rows"):
+        """Check every machine in parallel and schedule safe row-status updates.
+
+        Checked one at a time, each unreachable machine cost up to two
+        seconds (ping timeout plus TCP fallback), so with a few offline
+        machines the dots further down the list took tens of seconds to
+        fill in after the dashboard opened.
+        """
+        # Snapshot: refresh_machines() may replace the list on the main thread.
+        rows = [r for r in list(getattr(self, "machine_rows", [])) if r["data"].get("address")]
+        if not rows:
             return
 
-        for row in self.machine_rows:
+        def check(row):
             if self.stop_event.is_set():
-                break
+                return
+            data = row["data"]
+            latency = self.core.check_status(data["address"], port=data.get("port") or 22)
+            self.ui_call(lambda r=row, l=latency: self.update_row_status(r, l))
 
-            ip = row["data"].get("address")
-            if not ip:
-                continue
-
-            mach_latency = self.core.check_status(ip, port=row["data"].get("port") or 22)
-
-            self.ui_call(
-                lambda r=row, l=mach_latency: self.update_row_status(r, l)
-            )
+        with ThreadPoolExecutor(max_workers=min(STATUS_WORKERS, len(rows))) as pool:
+            list(pool.map(check, rows))
 
     # --- SHUTDOWN / LIFECYCLE ---
 
@@ -677,25 +809,22 @@ def main():
     core = MachineManagerCore(test_mode="--test" in sys.argv)
     pid_file = core.runtime_path("dashboard.pid")
 
-    if os.path.exists(pid_file):
-        try:
-            with open(pid_file, "r") as f:
-                old_pid = int(f.read().strip())
-            os.kill(old_pid, 0)
-            sys.exit(0)
-        except (ProcessLookupError, ValueError, OSError):
+    old_pid = read_pid_file(pid_file)
+    if old_pid and old_pid != os.getpid():
+        # A stale file can name a PID that macOS has since reused, so check
+        # it really is a dashboard; if so, bring that one forward instead.
+        if is_switchbored_process(old_pid, "--dashboard"):
             try:
-                os.remove(pid_file)
+                os.kill(old_pid, SHOW_SIGNAL)
             except OSError:
                 pass
+            sys.exit(0)
+        try:
+            os.remove(pid_file)
+        except OSError:
+            pass
 
     app = RemoteManagerDash(core)
-
-    # The console asks us to quit with SIGTERM; close cleanly so window
-    # geometry is saved and the PID file is removed. The queue-drain 'after'
-    # loop guarantees the Python-level handler runs promptly.
-    signal.signal(signal.SIGTERM, lambda *_: app.after(0, app.on_closing))
-
     app.mainloop()
 
 
