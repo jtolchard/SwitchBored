@@ -281,13 +281,14 @@ class MachineManagerCore:
             return
 
         try:
-            import inspect
             from datetime import datetime
 
-            caller = inspect.stack()[1]
-            filename = os.path.basename(caller.filename)
-            func = caller.function
-            line = caller.lineno
+            # sys._getframe is ~1000x cheaper than inspect.stack(), which
+            # reads source context for every frame on the stack each call.
+            caller = sys._getframe(1)
+            filename = os.path.basename(caller.f_code.co_filename)
+            func = caller.f_code.co_name
+            line = caller.f_lineno
 
             log_str = f"[{category.center(8)}] {message} ({filename}:{func}:{line})\n"
 
