@@ -67,6 +67,46 @@ def is_switchbored_process(pid, flag=None):
         return flag in args
     return "--dashboard" not in args and "--about" not in args
 
+# How long the "already running" notice stays up if nobody clicks OK.
+NOTICE_TIMEOUT = 30
+
+def _show_native_notice():
+    """Show the notice as a native alert carrying the SwitchBored icon.
+
+    Shown by this (second) process itself rather than osascript, whose
+    alerts can only show osascript's own generic icon.
+    """
+    from AppKit import (
+        NSAlert, NSApplication, NSImage, NSModalPanelRunLoopMode,
+        NSRunLoop, NSTimer, NSApplicationActivationPolicyAccessory,
+    )
+    from console.bootstrap import find_app_icon
+
+    app = NSApplication.sharedApplication()
+    # No Dock icon for this short-lived instance (the bundle already
+    # runs as a menu-bar app; this matters when running from source).
+    app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+
+    alert = NSAlert.alloc().init()
+    alert.setMessageText_("SwitchBored is already running")
+    alert.setInformativeText_("Look for its icon in the menu bar.")
+    alert.addButtonWithTitle_("OK")
+
+    icon_path = find_app_icon()
+    icon = NSImage.alloc().initWithContentsOfFile_(icon_path) if icon_path else None
+    if icon is not None:
+        alert.setIcon_(icon)
+
+    # Dismiss itself after a while, as the old 'giving up after 30' did.
+    timer = NSTimer.timerWithTimeInterval_repeats_block_(
+        NOTICE_TIMEOUT, False, lambda _timer: app.abortModal()
+    )
+    NSRunLoop.currentRunLoop().addTimer_forMode_(timer, NSModalPanelRunLoopMode)
+
+    app.activateIgnoringOtherApps_(True)
+    alert.runModal()
+    timer.invalidate()
+
 def _notify_already_running():
     """Show a visible notice that another instance owns the lock.
 
@@ -74,6 +114,12 @@ def _notify_already_running():
     menu-bar app has no window — without this, declining to start looks
     exactly like a crash.
     """
+    try:
+        _show_native_notice()
+        return
+    except Exception:
+        pass  # fall back to osascript (generic icon)
+
     script = (
         'display alert "SwitchBored is already running" '
         'message "Look for its icon in the menu bar." '
