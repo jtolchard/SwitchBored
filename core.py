@@ -18,6 +18,10 @@ OFFLINE_AFTER_MISSES = 3
 # Port tried for machines with VNC enabled when they don't answer ping.
 VNC_PORT = 5900
 
+# Ports tried for a reference server that isn't one of the configured
+# machines when it doesn't answer ping (e.g. 1.1.1.1 serves the web).
+REFERENCE_PORTS = (443, 80)
+
 
 class StatusTracker:
     """Turns individual checks into a steady online/offline state.
@@ -357,6 +361,32 @@ class MachineManagerCore:
     def check_machine(self, machine, timeout=1.0):
         """Check one configured machine; return latency in seconds or None."""
         return self.check_status(machine.get("address"), timeout=timeout, port=self.probe_ports(machine))
+
+    def check_reference(self, target, timeout=1.0):
+        """Check the reference server the same way machines are checked.
+
+        It used to get ping only, with no fallback, so it went red whenever
+        a few replies were dropped, while the same host listed as a machine
+        stayed green thanks to its port fallback. The name is resolved once
+        here; if it matches a configured machine's address, that machine's
+        ports are used for the fallback, otherwise REFERENCE_PORTS.
+        """
+        target = str(target or "").strip()
+        if not target:
+            return None
+        try:
+            address = socket.gethostbyname(target)
+        except OSError:
+            self.log("NETWORK", f"Reference server {target} did not resolve")
+            return None
+
+        names = {target.lower(), address}
+        ports = list(REFERENCE_PORTS)
+        for machine in self.settings.get("machines", []):
+            if str(machine.get("address", "")).strip().lower() in names:
+                ports = self.probe_ports(machine)
+                break
+        return self.check_status(address, timeout=timeout, port=ports)
 
     # --- Shared status snapshot -------------------------------------------
     # The menu-bar console already checks every machine every few seconds.
