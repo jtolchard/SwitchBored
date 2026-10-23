@@ -81,7 +81,9 @@ menu — or enable "Open Dashboard on Startup" in Settings.
 > the services the machine is set up for: its SSH port, and VNC's port 5900
 > if VNC is enabled. A refused connection still counts as reachable. A
 > machine is only shown offline after three missed checks in a row (about
-> 15 seconds), so slow or busy devices don't flicker between states.
+> 15 seconds), so slow or busy devices don't flicker between states. The
+> reference server is checked the same way: with the ports of the matching
+> machine if it is one of yours, otherwise ports 443 and 80.
 
 ## Updates
 
