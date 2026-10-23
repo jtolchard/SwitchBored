@@ -783,7 +783,7 @@ class RemoteManagerDash(DebugConsoleMixin, ctk.CTk):
             return
 
         target = self.settings.get("ref_server", "1.1.1.1")
-        state = self._status_tracker.update(("reference", target), self.core.check_status(target))
+        state = self._status_tracker.update(("reference", target), self.core.check_reference(target))
         self._show_reference_online(state["online"])
 
     def _show_reference_online(self, online):
