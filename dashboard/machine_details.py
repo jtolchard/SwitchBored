@@ -153,10 +153,7 @@ class MachineDetailsWindow(ctk.CTkToplevel):
 
     def _fetch_status(self):
         """Check machine reachability and update the live ping label."""
-        latency = self.core.check_status(
-            self.machine.get('address'),
-            port=self.machine.get('port') or 22,
-        )
+        latency = self.core.check_machine(self.machine)
 
         def apply():
             if not self.winfo_exists() or not self.p_lbl.winfo_exists():
@@ -165,7 +162,9 @@ class MachineDetailsWindow(ctk.CTkToplevel):
                 ms_val = latency * 1000
                 self.p_lbl.configure(text=f"{ms_val:.1f} ms", text_color="#2fa572")
             else:
-                self.p_lbl.configure(text="Offline", text_color="#e74c3c")
+                # A single live check: busy machines can miss one while
+                # still being online, so don't call it "Offline".
+                self.p_lbl.configure(text="No reply", text_color="#e74c3c")
 
         schedule_on_ui_thread(self._ui_root, apply)
 
