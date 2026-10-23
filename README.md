@@ -76,9 +76,12 @@ launch the dashboard opens by itself. Add machines via the dashboard's
 menu — or enable "Open Dashboard on Startup" in Settings.
 
 > **Note on status checks:** machine status is checked with ICMP ping first.
-> If ping is unavailable (unprivileged raw sockets) or blocked by a firewall,
-> SwitchBored falls back to timing a TCP connection to the machine's SSH port,
-> so reachable machines still show as online.
+> If ping gets no answer (unprivileged raw sockets, a firewall, or a busy
+> device dropping the reply), SwitchBored falls back to a TCP connection to
+> the services the machine is set up for: its SSH port, and VNC's port 5900
+> if VNC is enabled. A refused connection still counts as reachable. A
+> machine is only shown offline after three missed checks in a row (about
+> 15 seconds), so slow or busy devices don't flicker between states.
 
 ## Updates
 
@@ -186,7 +189,11 @@ the template for a helper that merges saved values with schema defaults.
 - `core.log(category, message)` — write to the debug console/log
   (visible when Debug Mode is on).
 - `core.check_status(address, timeout=1.0, port=None)` — ping (with TCP
-  fallback); returns latency in seconds or `None`.
+  fallback to `port`, which may be one port or a list); returns latency in
+  seconds or `None`.
+- `core.check_machine(machine, timeout=1.0)` — the same check for a
+  configured machine dict, falling back to the ports of its enabled
+  connections.
 - `core.run_ssh_command(machine, command, timeout=5)` — run a remote command;
   returns `(ok, output)` where `ok` is `False` on connection failure.
 
