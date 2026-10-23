@@ -7,7 +7,7 @@ import threading
 import tkinter
 from concurrent.futures import ThreadPoolExecutor
 import customtkinter as ctk
-from core import MachineManagerCore
+from core import MachineManagerCore, StatusTracker
 from actions import ActionManager
 from console.bootstrap import spawn_self
 from console.dashboard_runtime import SHOW_SIGNAL
@@ -105,6 +105,9 @@ class RemoteManagerDash(DebugConsoleMixin, ctk.CTk):
         self._ui_queue = queue.Queue()
         self._revealed = False
         self._screen_rects = []
+        # Smooths the dashboard's own checks (used when the menu bar's
+        # shared results are unavailable), as the menu bar does for its own.
+        self._status_tracker = StatusTracker()
 
         # Plugins that extend dashboard windows (e.g. usb_block) implement
         # on_machine_details / on_machine_editor and are dispatched via
@@ -589,19 +592,30 @@ class RemoteManagerDash(DebugConsoleMixin, ctk.CTk):
         self.update_idletasks()               
         self.after_idle(self.truncate_names)
 
-    def update_row_status(self, row, latency):
-        """Update a machine row's status indicator and tooltip safely."""
+    def update_row_status(self, row, status):
+        """Update a machine row's status indicator and tooltip safely.
+
+        status is a StatusTracker state dict (online, latency, last_seen,
+        missed); a bare latency or None is accepted too.
+        """
         dot = row.get('dot')
         tooltip = row.get('dot_tip')
-        
+
         if not dot or not dot.winfo_exists():
             return
-            
-        if latency is not None:
-            ms_val = latency * 1000
+
+        if not isinstance(status, dict):
+            status = {"online": status is not None, "latency": status, "last_seen": None, "missed": 0}
+
+        if status.get("online"):
             dot.configure(text="●", text_color="#2fa572") # Green
             if tooltip:
-                tooltip.text = f"{ms_val:.1f} ms"
+                latency = status.get("latency")
+                tooltip.text = f"{latency * 1000:.1f} ms" if latency is not None else "Online"
+                if status.get("missed") and status.get("last_seen"):
+                    # Still shown online: a busy machine missed a check or two.
+                    ago = max(0, int(time.time() - status["last_seen"]))
+                    tooltip.text = f"No reply for {ago}s (last reply {tooltip.text})"
         else:
             dot.configure(text="●", text_color="#e74c3c") # Red
             if tooltip:
@@ -743,7 +757,8 @@ class RemoteManagerDash(DebugConsoleMixin, ctk.CTk):
         else:
             reference = snapshot.get("reference") or {}
             if reference.get("target") == self.settings.get("ref_server", "1.1.1.1"):
-                self._show_reference_latency(reference.get("latency"))
+                online = reference.get("online", reference.get("latency") is not None)
+                self._show_reference_online(online)
             else:
                 self._update_reference_status()
 
@@ -768,11 +783,12 @@ class RemoteManagerDash(DebugConsoleMixin, ctk.CTk):
             return
 
         target = self.settings.get("ref_server", "1.1.1.1")
-        self._show_reference_latency(self.core.check_status(target))
+        state = self._status_tracker.update(("reference", target), self.core.check_status(target))
+        self._show_reference_online(state["online"])
 
-    def _show_reference_latency(self, latency):
-        """Show a reference-server result in the status bar."""
-        if latency is not None:
+    def _show_reference_online(self, online):
+        """Show the reference server's (smoothed) state in the status bar."""
+        if online:
             self._set_reference_status_label("Network Connection: Online ✅", "#2fa572")
         else:
             self._set_reference_status_label("Network Connection: Offline ❌", "#e74c3c")
@@ -809,8 +825,9 @@ class RemoteManagerDash(DebugConsoleMixin, ctk.CTk):
             if self.stop_event.is_set():
                 return
             data = row["data"]
-            latency = self.core.check_status(data["address"], port=data.get("port") or 22)
-            self.ui_call(lambda r=row, l=latency: self.update_row_status(r, l))
+            key = self.core.status_key(data["address"], data.get("port") or 22)
+            state = self._status_tracker.update(key, self.core.check_machine(data))
+            self.ui_call(lambda r=row, s=state: self.update_row_status(r, s))
 
         with ThreadPoolExecutor(max_workers=min(STATUS_WORKERS, len(rows))) as pool:
             list(pool.map(check, rows))
