@@ -6,8 +6,53 @@ import shlex
 import socket
 import getpass
 import platform
+import threading
 import subprocess
 from ping3 import ping
+
+# A machine is shown offline only after this many failed checks in a row
+# (about 15s at the menu bar's 5s cadence). Busy devices can drop replies
+# for several seconds at a time, which used to make their dots blink.
+OFFLINE_AFTER_MISSES = 3
+
+# Port tried for machines with VNC enabled when they don't answer ping.
+VNC_PORT = 5900
+
+
+class StatusTracker:
+    """Turns individual checks into a steady online/offline state.
+
+    A machine that has been seen online stays online until it misses
+    OFFLINE_AFTER_MISSES checks in a row; any reply brings it straight back.
+    One that hasn't answered since tracking began shows offline at once, so
+    a dead machine isn't shown as online at startup. Thread-safe.
+    """
+
+    def __init__(self, misses_to_offline=OFFLINE_AFTER_MISSES):
+        self.misses_to_offline = misses_to_offline
+        self._lock = threading.Lock()
+        self._states = {}
+
+    def update(self, key, latency, now=None):
+        """Record one check result; return the machine's state as a dict.
+
+        The dict has online (bool), latency (last reply, seconds),
+        last_seen (epoch seconds of the last reply) and missed (failed
+        checks since the last reply).
+        """
+        now = time.time() if now is None else now
+        with self._lock:
+            state = self._states.setdefault(
+                key, {"online": False, "latency": None, "last_seen": None, "missed": 0}
+            )
+            if latency is not None:
+                state.update(online=True, latency=latency, last_seen=now, missed=0)
+            else:
+                state["missed"] += 1
+                if state["missed"] >= self.misses_to_offline:
+                    state["online"] = False
+            return dict(state)
+
 
 class MachineManagerCore:
     """Core service layer for settings, connectivity checks, SSH helpers, and plugins."""
@@ -258,9 +303,11 @@ class MachineManagerCore:
     def check_status(self, address, timeout=1.0, port=None):
         """Ping a host and return latency in seconds, or None if it is unreachable.
 
-        When ICMP fails (blocked by a firewall, or raw sockets unavailable)
-        and a TCP port is provided, fall back to timing a TCP connection to
-        that port so reachable-but-unpingable machines still show online.
+        When ICMP gets no answer (blocked by a firewall, raw sockets
+        unavailable, or a busy device dropping the reply), fall back to a TCP
+        connection to port, which may be one port or a list of them. A
+        refused connection also counts as reachable: the host answered, it
+        just doesn't serve that port.
         """
         if not address:
             return None
@@ -272,16 +319,44 @@ class MachineManagerCore:
         except Exception as e:
             self.log("NETWORK", f"Ping error on {address}: {type(e).__name__}: {e}")
 
-        if port:
+        ports = port if isinstance(port, (list, tuple)) else [port] if port else []
+        for p in ports:
+            start = time.monotonic()
             try:
-                start = time.monotonic()
-                with socket.create_connection((address, int(port)), timeout=timeout):
+                with socket.create_connection((address, int(p)), timeout=timeout):
                     return time.monotonic() - start
-            except Exception:
-                pass
+            except ConnectionRefusedError:
+                return time.monotonic() - start
+            except (OSError, ValueError):
+                continue
 
         self.log("NETWORK", f"Ping failed for {address}")
         return None
+
+    @staticmethod
+    def probe_ports(machine):
+        """Return the TCP ports to try when a machine doesn't answer ping.
+
+        These are the services the machine is set up for: its SSH port if
+        SSH, SFTP or TMUX is enabled, and VNC's port if VNC is. A VNC-only
+        device (e.g. an industrial controller) never answers on port 22.
+        """
+        try:
+            ssh_port = int(machine.get("port") or 22)
+        except (TypeError, ValueError):
+            ssh_port = 22
+
+        connections = machine.get("connections", [])
+        ports = []
+        if any(c in connections for c in ("SSH", "SFTP", "TMUX")):
+            ports.append(ssh_port)
+        if "VNC" in connections and VNC_PORT not in ports:
+            ports.append(VNC_PORT)
+        return ports or [ssh_port]
+
+    def check_machine(self, machine, timeout=1.0):
+        """Check one configured machine; return latency in seconds or None."""
+        return self.check_status(machine.get("address"), timeout=timeout, port=self.probe_ports(machine))
 
     # --- Shared status snapshot -------------------------------------------
     # The menu-bar console already checks every machine every few seconds.
