@@ -32,6 +32,9 @@ and versions follow `MAJOR.MINOR.PATCH`.
 - A newly opened dashboard no longer appears behind other windows.
 - Machine status dots fill in within a couple of seconds of opening the
   dashboard; machines are now checked in parallel.
+- The menu bar icon and the dashboard's Network Connection status now
+  check the reference server the same way machines are checked, so they
+  no longer turn red while the same server shows online in the list.
 - SwitchBored could refuse to start ("already running"), or close an
   unrelated process on quit, when a leftover lock file named a process ID
   macOS had since reused.
