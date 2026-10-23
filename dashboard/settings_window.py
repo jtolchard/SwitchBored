@@ -990,7 +990,7 @@ class SettingsWindow(ctk.CTkToplevel):
             return
 
         def do_ping():
-            latency = self.core.check_status(target)
+            latency = self.core.check_reference(target)
 
             def update_gui():
                 if self.winfo_exists() and self.use_ref_var.get():
