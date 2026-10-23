@@ -14,6 +14,13 @@ and versions follow `MAJOR.MINOR.PATCH`.
   instantly, without needing automation permission for System Events.
 - While the dashboard is open it shows the menu bar's status checks
   instead of pinging every machine a second time.
+- A machine is now shown offline only after three missed checks in a row
+  (about 15 seconds), so slow or busy devices no longer flicker between
+  online and offline; the reference server works the same way. Hovering a
+  dot shows how long a machine hasn't replied during that grace period.
+- When a machine doesn't answer ping, the fallback check now tries the
+  services it is set up for (its SSH port, and port 5900 if VNC is
+  enabled), and a refused connection counts as reachable.
 - The "SwitchBored is already running" notice now shows the app's icon
   instead of a generic folder.
 - Debug Mode logging is much lighter and no longer slows the app down.
