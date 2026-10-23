@@ -471,7 +471,7 @@ class SysAdminConsole(rumps.App):
                 if self.core.settings.get("use_ref_server", True):
                     target = self.core.settings.get("ref_server", "1.1.1.1")
                     def check_ref():
-                        lat = self.core.check_status(target)
+                        lat = self.core.check_reference(target)
                         state = self.status_tracker.update(("reference", target), lat)
                         self.reference_status = state["online"]
                         reference.update(state, target=target)
