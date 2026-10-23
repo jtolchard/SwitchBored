@@ -10,7 +10,7 @@ import webbrowser
 import atexit
 from collections import deque
 from PIL import Image, ImageDraw
-from core import MachineManagerCore
+from core import MachineManagerCore, StatusTracker
 from actions import ActionManager
 from console.dashboard_runtime import DashboardRuntime
 from console.restart import handle_restart
@@ -88,6 +88,9 @@ class SysAdminConsole(rumps.App):
         # the main thread by process_ui_updates (AppKit is not thread-safe).
         self._status_lock = threading.Lock()
         self._pending_status = {}
+        # Smooths each machine's checks so a busy device that drops a few
+        # replies doesn't flicker between online and offline.
+        self.status_tracker = StatusTracker()
         # General-purpose queue of callables to run on the main thread,
         # drained by the same UI timer.
         self._main_thread_calls = queue.Queue()
@@ -192,6 +195,8 @@ class SysAdminConsole(rumps.App):
                 "name": m_name,
                 "address": m_addr,
                 "port": m.get("port") or 22,
+                # Ports to try when ping gets no answer (services it runs).
+                "probe_ports": self.core.probe_ports(m),
             }
 
     def rebuild_menu(self):
@@ -294,13 +299,16 @@ class SysAdminConsole(rumps.App):
         machines = self.core.settings.get("machines", [])
         now = time.time()
 
-        for idx, is_online in pending.items():
+        # shown_online is the smoothed state (offline only after several
+        # misses in a row); answered is this check's own result, which the
+        # notifier uses so its 30 seconds of unreachability stay 30 seconds.
+        for idx, (shown_online, answered) in pending.items():
             entry = self.menu_lookup.get(idx)
             if not entry:
                 continue
 
             try:
-                entry["item"].icon = self.menu_green_dot if is_online else self.menu_red_dot
+                entry["item"].icon = self.menu_green_dot if shown_online else self.menu_red_dot
 
                 if 0 <= idx < len(machines):
                     machine = machines[idx]
@@ -311,7 +319,7 @@ class SysAdminConsole(rumps.App):
 
             if 0 <= idx < len(machines):
                 machine = machines[idx]
-                if self._should_notify_offline(machine, entry["address"], is_online, now):
+                if self._should_notify_offline(machine, entry["address"], answered, now):
                     self._notify_machine_offline(machine)
 
     def _should_notify_offline(self, machine, addr, is_online, now):
@@ -456,16 +464,17 @@ class SysAdminConsole(rumps.App):
             """Perform one full batch of background status checks."""
             try:
                 threads = []
-                # Latencies for the shared snapshot the dashboard reads.
-                latencies = {}
+                # Smoothed states for the shared snapshot the dashboard reads.
+                states = {}
                 reference = {}
 
                 if self.core.settings.get("use_ref_server", True):
                     target = self.core.settings.get("ref_server", "1.1.1.1")
                     def check_ref():
                         lat = self.core.check_status(target)
-                        self.reference_status = (lat is not None)
-                        reference.update(target=target, latency=lat)
+                        state = self.status_tracker.update(("reference", target), lat)
+                        self.reference_status = state["online"]
+                        reference.update(state, target=target)
 
                     t_ref = threading.Thread(target=check_ref, daemon=True)
                     t_ref.start()
@@ -473,13 +482,16 @@ class SysAdminConsole(rumps.App):
 
                 if hasattr(self, 'menu_lookup'):
                     for index, data in list(self.menu_lookup.items()):
-                        def check_machine(idx=index, addr=data["address"], port=data.get("port")):
-                            latency = self.core.check_status(addr, port=port)
+                        def check_machine(idx=index, addr=data["address"], port=data.get("port"),
+                                          probe_ports=data.get("probe_ports")):
+                            latency = self.core.check_status(addr, port=probe_ports or port)
+                            key = self.core.status_key(addr, port)
+                            state = self.status_tracker.update(key, latency)
                             # Never touch the menu from a worker thread; queue
                             # the result for the main-thread UI timer.
                             with self._status_lock:
-                                self._pending_status[idx] = latency is not None
-                            latencies[self.core.status_key(addr, port)] = latency
+                                self._pending_status[idx] = (state["online"], latency is not None)
+                            states[key] = state
 
                         t_mac = threading.Thread(target=check_machine, daemon=True)
                         t_mac.start()
@@ -492,7 +504,7 @@ class SysAdminConsole(rumps.App):
                 # Only while a dashboard is open; it falls back to its own
                 # checks when the snapshot is missing or stale.
                 if os.path.exists(self.dashboard_runtime.dashboard_pid_file):
-                    self.core.save_status_snapshot(dict(latencies), dict(reference) or None)
+                    self.core.save_status_snapshot(dict(states), dict(reference) or None)
 
             finally:
                 self.worker_lock.release()
