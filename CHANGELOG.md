@@ -5,6 +5,51 @@ All notable changes to SwitchBored are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow `MAJOR.MINOR.PATCH`.
 
+## [1.5.0] - 2026-10-23
+
+### Changed
+- Open Dashboard now brings the dashboard, with any open Settings or
+  details windows, to the desktop you're using instead of switching you
+  to the desktop it was left on. An open dashboard comes to the front
+  instantly, without needing automation permission for System Events.
+- While the dashboard is open it shows the menu bar's status checks
+  instead of pinging every machine a second time.
+- The "SwitchBored is already running" notice now shows the app's icon
+  instead of a generic folder.
+- Debug Mode logging is much lighter and no longer slows the app down.
+
+### Fixed
+- The dashboard no longer gets lost after disconnecting an external
+  monitor: it moves itself back onto a connected display when the display
+  layout changes, when it opens, and when you choose Open Dashboard.
+- A newly opened dashboard no longer appears behind other windows.
+- Machine status dots fill in within a couple of seconds of opening the
+  dashboard; machines are now checked in parallel.
+- SwitchBored could refuse to start ("already running"), or close an
+  unrelated process on quit, when a leftover lock file named a process ID
+  macOS had since reused.
+- Quitting the dashboard with Cmd+Q, or logging out, now saves its window
+  position.
+- Settings, the machine editor, details and services windows open on the
+  same display as the dashboard, and Settings fits on shorter screens with
+  its Save button visible.
+- The About window now opens on the desktop you're using, in front, even
+  if SwitchBored has been assigned to a specific desktop.
+- The System Services window no longer flashes up at a tiny size before
+  it opens.
+- Closing the Settings Saved popup with its close button now applies the
+  changes, like clicking OK.
+- The Updates tab follows an install through to the end and reports
+  failures, instead of staying on "Downloading…".
+- Deploying SSH keys no longer freezes the Settings window while it checks
+  which machines are reachable.
+- A failed update install now keeps the existing app instead of removing it.
+
+### Security
+- SSH and TMUX connections now quote the machine's user, address and port,
+  so a crafted value (e.g. in an imported machine list) can no longer run
+  a local command or inject ssh options.
+
 ## [1.4] - 2026-07-21
 
 ### Added
@@ -82,7 +127,8 @@ First public release.
   tab showing release notes.
 - Per-machine offline detection with ICMP ping and TCP fallback.
 
-[1.4]: https://github.com/jtolchard/SwitchBored/releases/tag/v1.4
+[1.5.0]: https://github.com/jtolchard/SwitchBored/releases/tag/v1.5.0
+[1.4]: https://github.com/jtolchard/SwitchBored/releases/tag/v1.4.0
 [1.3.2]: https://github.com/jtolchard/SwitchBored/releases/tag/v1.3.2
 [1.3.1]: https://github.com/jtolchard/SwitchBored/releases/tag/v1.3.1
 [1.3]: https://github.com/jtolchard/SwitchBored/releases/tag/v1.3
