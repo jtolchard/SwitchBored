@@ -35,7 +35,32 @@ if [ -n "$EXTRA_PLUGINS" ]; then
 fi
 
 VERSION=$("$PYTHON" -c "from version import VERSION; print(VERSION)")
-echo "==> Building SwitchBored $VERSION"
+
+# The updater only reads versions like 1.5.1 (a release) or 1.5.2-dev.1 (a
+# development build); anything else would never be offered to anyone.
+if [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+)*-dev\.[0-9]+$ ]]; then
+    DEV_BUILD=1
+elif [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+    DEV_BUILD=0
+else
+    echo "Error: version '$VERSION' must look like 1.5.1 or 1.5.2-dev.1." >&2
+    exit 1
+fi
+
+# Releases are published from main and development builds from dev.
+# Building from another branch is fine for testing, so this only warns.
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+if [ "$DEV_BUILD" = 1 ] && [ "$BRANCH" != "dev" ]; then
+    echo "Warning: building development build $VERSION on '$BRANCH'; publish dev builds from dev." >&2
+elif [ "$DEV_BUILD" = 0 ] && [ "$BRANCH" != "main" ]; then
+    echo "Warning: building release $VERSION on '$BRANCH'; publish releases from main." >&2
+fi
+
+if [ "$DEV_BUILD" = 1 ]; then
+    echo "==> Building SwitchBored $VERSION (development build)"
+else
+    echo "==> Building SwitchBored $VERSION"
+fi
 
 echo "==> Cleaning build/, dist/, .venv/"
 rm -rf build dist .venv
@@ -61,6 +86,16 @@ case "$MINOS" in
 esac
 echo "==> Minimum macOS: $MINOS"
 
+# Some bundled libraries are arm64-only, so the app must never start under
+# Rosetta; setup.py's LSRequiresNativeExecution makes sure of that.
+NATIVE=$(/usr/libexec/PlistBuddy -c "Print :LSRequiresNativeExecution" \
+    dist/SwitchBored.app/Contents/Info.plist 2>/dev/null || true)
+if [ "$NATIVE" != "true" ]; then
+    echo "Error: Info.plist is missing LSRequiresNativeExecution — check setup.py." >&2
+    exit 1
+fi
+echo "==> Runs natively only (no Rosetta)"
+
 echo "==> Zipping release asset"
 ZIP="SwitchBored-$VERSION.zip"
 (cd dist && ditto -c -k --keepParent SwitchBored.app "$ZIP")
@@ -68,4 +103,11 @@ ZIP="SwitchBored-$VERSION.zip"
 echo ""
 echo "Done: dist/SwitchBored.app  and  dist/$ZIP"
 echo "Publish with:"
-echo "  gh release create v$VERSION dist/$ZIP --title \"SwitchBored $VERSION\" --notes \"<paste from CHANGELOG.md>\""
+if [ "$DEV_BUILD" = 1 ]; then
+    # --prerelease keeps it away from everyone who hasn't opted in, and
+    # --target tags dev's latest commit (gh otherwise tags main).
+    echo "  git push origin dev"
+    echo "  gh release create v$VERSION dist/$ZIP --prerelease --target dev --title \"SwitchBored $VERSION (development build)\" --notes \"<what changed>\""
+else
+    echo "  gh release create v$VERSION dist/$ZIP --title \"SwitchBored $VERSION\" --notes \"<paste from CHANGELOG.md>\""
+fi
