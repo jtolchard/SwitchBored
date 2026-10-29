@@ -36,6 +36,12 @@ def mypyc_helper_modules():
         for path in glob.glob(os.path.join(site_dir, "*__mypyc.cpython-*.so"))
     ]
 
+
+# macOS expects the bundle version to be plain numbers, so a development
+# build such as 1.5.2-dev.1 is recorded as 1.5.2. The app itself shows
+# the full version.
+BUNDLE_VERSION = VERSION.split("-")[0]
+
 setup(
     app=["console.py"],
     name=APP_NAME,
@@ -56,9 +62,14 @@ setup(
             "plist": {
                 "CFBundleName": APP_NAME,
                 "CFBundleIdentifier": "com.jtolchard.switchbored",
-                "CFBundleShortVersionString": VERSION,
+                "CFBundleShortVersionString": BUNDLE_VERSION,
                 # Menu-bar app: no Dock icon
                 "LSUIElement": True,
+                # Always run natively on Apple silicon. Some bundled
+                # libraries (Pillow) are arm64-only, so a launch under
+                # Rosetta fails at startup ("Launch error"). This also
+                # removes "Open using Rosetta" from Get Info.
+                "LSRequiresNativeExecution": True,
             },
         }
     },
