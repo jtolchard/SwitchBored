@@ -53,8 +53,8 @@ remote service control and log viewing over SSH.
 Grab the latest `SwitchBored.zip` from the
 [Releases page](https://github.com/jtolchard/SwitchBored/releases/latest),
 unzip it, and drag `SwitchBored.app` into `/Applications`. The bundled app
-requires an Apple-silicon Mac running macOS 11 (Big Sur) or later; Intel
-users can run from source.
+requires an Apple-silicon Mac running macOS 11 (Big Sur) or later, and
+always runs natively (never under Rosetta); Intel users can run from source.
 
 > **First launch:** the app is not notarized by Apple, so macOS may refuse to
 > open it. Go to System Settings → Privacy & Security and click
@@ -96,6 +96,14 @@ Your settings and installed plugins are untouched, because they live outside
 the bundle (see below). When running from source, the update prompt just
 points you at the release page; update with `git pull`. A full version
 history lives in [CHANGELOG.md](CHANGELOG.md).
+
+**Development builds:** to try new features before they're released, tick
+⚙ Settings → Advanced Features → **Include development builds in updates**.
+You'll then also be offered previews from the `dev` branch, tagged like
+`v1.5.2-dev.1`. They may be less stable than releases. When the release
+they lead up to comes out, you're offered it as usual. Unticking the box
+keeps the build you have until a newer release appears; it doesn't
+downgrade you.
 
 ## Where your data lives
 
@@ -271,6 +279,24 @@ ditto -c -k --keepParent SwitchBored.app SwitchBored-1.3.zip
 
 `ditto` (rather than a plain `zip`) preserves the bundle's permissions and
 metadata, and matches how the updater unpacks it on the other end.
+
+### Branches and development builds
+
+- `main` holds released code; releases are built from it and tagged
+  `vX.Y.Z`.
+- `dev` is where new work goes. Merge it into `main` when it's ready to
+  release.
+- A development build previews the next release: set `VERSION` in
+  `version.py` to e.g. `1.5.2-dev.1` (then `-dev.2`, …) on `dev`, build,
+  and publish it as a GitHub **pre-release** tagged `v1.5.2-dev.1`.
+  `build_release.sh` prints the exact command (`--prerelease --target dev`).
+- Development builds sort just below the release they lead up to
+  (`1.5.1` < `1.5.2-dev.1` < `1.5.2-dev.2` < `1.5.2`), so testers are moved
+  onto the release when it's published. Only installs with *Include
+  development builds in updates* ticked are offered them; everyone else
+  only ever sees releases, even if the pre-release box was missed.
+- Development builds don't get their own CHANGELOG entries; their changes
+  go under the release they lead up to.
 
 ## License
 
