@@ -14,7 +14,10 @@ from .dialogs import ConfirmationDialog
 from .ssh_keys import SSHKeyAssistant
 from .ui_helpers import center_window_over_parent, find_ui_root, schedule_on_ui_thread
 from .screens import TITLE_BAR_HEIGHT, place_window, screen_of, window_rect
-from console.updater import fetch_latest_release, parse_version, is_frozen, INSTALL_STATUS_FILE
+from console.updater import (
+    fetch_latest_release, parse_version, is_dev_version, is_frozen,
+    INSTALL_STATUS_FILE, OLDEST_VERSION,
+)
 from version import VERSION
 
 # How long to wait for the menu-bar app to acknowledge an install request
@@ -90,6 +93,7 @@ class SettingsWindow(ctk.CTkToplevel):
 
         self._update_check_running = False
         self._install_in_progress = False
+        self._checked_include_dev = False
 
         # ------------------------------------------------------------------
         # Machines tab
@@ -375,9 +379,12 @@ class SettingsWindow(ctk.CTkToplevel):
         # Updates tab
         # ------------------------------------------------------------------
 
+        installed = f"Installed version: v{VERSION}"
+        if is_dev_version(VERSION):
+            installed += " (development build)"
         ctk.CTkLabel(
             self.tab_updates,
-            text=f"Installed version: v{VERSION}",
+            text=installed,
             font=("", 12, "bold")
         ).pack(anchor="w", padx=20, pady=(15, 0))
 
@@ -425,7 +432,13 @@ class SettingsWindow(ctk.CTkToplevel):
         ctk.CTkCheckBox(adv_frame, text="Enable Debug Mode", variable=self.debug_var).pack(anchor="w", padx=15, pady=(5, 5))
 
         self.sysadmin_var = ctk.BooleanVar(value=self.settings.get("sysadmin_features", False))
-        ctk.CTkCheckBox(adv_frame, text="Enable Sysadmin Features", variable=self.sysadmin_var).pack(anchor="w", padx=15, pady=(5, 10))
+        ctk.CTkCheckBox(adv_frame, text="Enable Sysadmin Features", variable=self.sysadmin_var).pack(anchor="w", padx=15, pady=(5, 5))
+
+        # Development builds are previews from the dev branch, published as
+        # GitHub pre-releases. The Updates tab follows this box as ticked.
+        self.dev_builds_var = ctk.BooleanVar(value=self.settings.get("update_dev_builds", False))
+        ctk.CTkCheckBox(adv_frame, text="Include development builds in updates",
+                        variable=self.dev_builds_var).pack(anchor="w", padx=15, pady=(5, 10))
 
         # --- DANGER ZONE ---
         ctk.CTkLabel(self.glob_scroll, text="Danger Zone:", font=("", 12, "bold"), text_color="#e74c3c").pack(anchor="w", padx=10, pady=(15, 0))
@@ -492,13 +505,18 @@ class SettingsWindow(ctk.CTkToplevel):
         self._update_check_running = True
         self.update_status_lbl.configure(text="Checking for updates…", text_color="gray")
 
+        # Follow the box as ticked now, saved or not, and install from the
+        # same choice so the install finds the release shown here.
+        include_dev = self.dev_builds_var.get()
+        self._checked_include_dev = include_dev
+
         def check():
             try:
-                release = fetch_latest_release()
+                release = fetch_latest_release(include_dev=include_dev)
             except Exception:
                 release = None
 
-            current = parse_version(VERSION) or (0,)
+            current = parse_version(VERSION) or OLDEST_VERSION
 
             def apply():
                 self._update_check_running = False
@@ -521,10 +539,11 @@ class SettingsWindow(ctk.CTkToplevel):
                 else:
                     notes = release["notes"] or "No release notes were provided."
                     self._available_release = release
+                    kind = "Development build" if release.get("is_dev") else "Version"
 
                     if is_frozen() and release.get("asset_url"):
                         self._show_update_result(
-                            f"Version {release['tag']} is available.",
+                            f"{kind} {release['tag']} is available.",
                             notes, status_color="#3B8ED0"
                         )
                         self.update_install_btn.configure(
@@ -533,7 +552,7 @@ class SettingsWindow(ctk.CTkToplevel):
                         self.update_install_btn.pack(pady=(0, 20))
                     else:
                         self._show_update_result(
-                            f"Version {release['tag']} is available — "
+                            f"{kind} {release['tag']} is available — "
                             "download it from the release page.",
                             notes, status_color="#3B8ED0"
                         )
@@ -553,7 +572,7 @@ class SettingsWindow(ctk.CTkToplevel):
 
         try:
             with open(self.core.runtime_path("install_update.flag"), "w") as f:
-                f.write("1")
+                json.dump({"include_dev": self._checked_include_dev}, f)
         except Exception as e:
             self.update_status_lbl.configure(
                 text=f"Could not start the update: {e}", text_color="#e74c3c"
@@ -1056,6 +1075,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self.settings["ref_server"] = self.ref_server.get().strip()
         self.settings["debug_mode"] = self.debug_var.get()
         self.settings["sysadmin_features"] = self.sysadmin_var.get()
+        self.settings["update_dev_builds"] = self.dev_builds_var.get()
 
         if hasattr(self, 'plugin_manager'):
             self.settings["plugins"] = new_plugin_data
