@@ -1,6 +1,7 @@
 import rumps
 import os
 import sys
+import json
 import time
 import queue
 import socket
@@ -148,12 +149,24 @@ class SysAdminConsole(rumps.App):
         flag = self.core.runtime_path("install_update.flag")
         if not os.path.exists(flag):
             return
+        # The request says whether the tab's check included development
+        # builds, so the install finds the same release the tab showed.
+        include_dev = None
+        try:
+            with open(flag) as f:
+                request = json.load(f)
+            if isinstance(request, dict) and "include_dev" in request:
+                include_dev = bool(request["include_dev"])
+        except (OSError, ValueError):
+            pass
         try:
             os.remove(flag)
         except OSError:
             pass
         self.core.log("UPDATER", "Install requested from dashboard")
-        threading.Thread(target=self.updater.install_latest, daemon=True).start()
+        threading.Thread(
+            target=self.updater.install_latest, args=(include_dev,), daemon=True
+        ).start()
 
     def build_machine_list(self):
         """Rebuild the Quick Connect submenu from the current machine settings."""
