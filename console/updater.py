@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import json
 import time
@@ -11,7 +12,20 @@ import requests
 
 GITHUB_REPO = "jtolchard/SwitchBored"
 RELEASES_PAGE = f"https://github.com/{GITHUB_REPO}/releases/latest"
-API_LATEST = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+API_RELEASES = f"https://api.github.com/repos/{GITHUB_REPO}/releases"
+
+# Releases are tagged like v1.5.1. Development builds from the dev branch
+# add -dev.N (v1.5.2-dev.1) and are published as GitHub pre-releases; only
+# installs with "Include development builds in updates" ticked get them.
+# Versions before 1.5.1 can't read -dev tags, so they never see them.
+VERSION_PATTERN = re.compile(r"^[vV]?(\d+(?:\.\d+)*)(?:-dev\.(\d+))?$")
+
+# Sorts below every real version: used when the running version is unreadable.
+OLDEST_VERSION = ((0,), 0, 0)
+
+# Releases scanned per check, newest first. The newest release is always
+# among them.
+RELEASES_PER_CHECK = 30
 
 # Automatic checks run at most once per day.
 AUTO_CHECK_INTERVAL = 24 * 3600
@@ -55,15 +69,28 @@ rm -rf "$STAGING"
 
 
 def parse_version(text):
-    """Turn a tag like 'v1.2.1' or '1.3' into a comparable tuple of ints."""
-    if not text:
+    """Turn a tag like 'v1.5.1' or 'v1.5.2-dev.3' into a comparable key.
+
+    A development build sorts just below the release it leads up to:
+    1.5.1 < 1.5.2-dev.1 < 1.5.2-dev.2 < 1.5.2. Trailing zeros don't count,
+    so 'v1.3' and '1.3.0' are equal. Returns None for any other format.
+    """
+    match = VERSION_PATTERN.match((text or "").strip())
+    if not match:
         return None
-    parts = []
-    for chunk in text.strip().lstrip("vV").split("."):
-        if not chunk.isdigit():
-            return None
-        parts.append(int(chunk))
-    return tuple(parts) or None
+    numbers = [int(n) for n in match.group(1).split(".")]
+    while len(numbers) > 1 and numbers[-1] == 0:
+        numbers.pop()
+    dev = match.group(2)
+    if dev is None:
+        return (tuple(numbers), 1, 0)
+    return (tuple(numbers), 0, int(dev))
+
+
+def is_dev_version(text):
+    """Return True for a development build version such as '1.5.2-dev.1'."""
+    version = parse_version(text)
+    return bool(version) and version[1] == 0
 
 
 def is_frozen():
@@ -82,13 +109,17 @@ def bundle_path():
     return path if path.endswith(".app") else None
 
 
-def fetch_latest_release():
-    """Return details of the latest published release, or None.
+def fetch_latest_release(include_dev=False):
+    """Return details of the newest published release, or None.
 
-    Shared by the console's automatic check and the dashboard's Updates tab.
+    include_dev also considers development builds and other pre-releases.
+    Without it, only full releases count; a -dev tag is skipped even if its
+    pre-release box was left unticked on GitHub. Shared by the console's
+    automatic check and the dashboard's Updates tab.
     """
     resp = requests.get(
-        API_LATEST,
+        API_RELEASES,
+        params={"per_page": RELEASES_PER_CHECK},
         timeout=10,
         headers={"Accept": "application/vnd.github+json"},
     )
@@ -96,7 +127,26 @@ def fetch_latest_release():
         return None
 
     data = resp.json()
-    if data.get("draft") or data.get("prerelease"):
+    if not isinstance(data, list):
+        return None
+
+    releases = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        release = _release_details(item)
+        if release is None:
+            continue
+        if not include_dev and (release["is_dev"] or item.get("prerelease")):
+            continue
+        releases.append(release)
+
+    return max(releases, key=lambda r: r["version"], default=None)
+
+
+def _release_details(data):
+    """Return what the updater needs from one GitHub release, or None."""
+    if data.get("draft"):
         return None
 
     tag = data.get("tag_name", "")
@@ -120,6 +170,7 @@ def fetch_latest_release():
         "asset_url": asset_url,
         "asset_name": asset_name,
         "notes": (data.get("body") or "").strip(),
+        "is_dev": version[1] == 0,
     }
 
 
@@ -135,9 +186,14 @@ class UpdateManager:
     def __init__(self, console, current_version):
         self.console = console
         self.core = console.core
-        self.current_version = parse_version(current_version) or (0,)
+        self.current_label = current_version
+        self.current_version = parse_version(current_version) or OLDEST_VERSION
         self.state_path = self.core.runtime_path("update_state.json")
         self._check_lock = threading.Lock()
+
+    def include_dev_builds(self):
+        """Return True when Settings asks for development builds too."""
+        return bool(self.core.settings.get("update_dev_builds", False))
 
     # ------------------------------------------------------------------
     # State file
@@ -182,7 +238,7 @@ class UpdateManager:
 
         try:
             try:
-                release = fetch_latest_release()
+                release = fetch_latest_release(include_dev=self.include_dev_builds())
             except Exception as e:
                 release = None
                 self.core.log("UPDATER", f"Update check failed: {type(e).__name__}: {e}")
@@ -200,13 +256,18 @@ class UpdateManager:
         finally:
             self._check_lock.release()
 
-    def install_latest(self):
+    def install_latest(self, include_dev=None):
         """Download and install the latest release without prompting.
 
         Triggered by the dashboard's Updates tab, where the user has already
         chosen to install; call from a background thread. Every outcome is
         reported back to the tab through INSTALL_STATUS_FILE.
+
+        include_dev: whether development builds count, as the Updates tab
+        checked; None uses the saved setting.
         """
+        if include_dev is None:
+            include_dev = self.include_dev_builds()
         self._report_install("checking", "Checking the latest release…")
 
         # The user asked for this, so wait out an automatic check that is
@@ -217,7 +278,7 @@ class UpdateManager:
 
         try:
             try:
-                release = fetch_latest_release()
+                release = fetch_latest_release(include_dev=include_dev)
             except Exception as e:
                 release = None
                 self.core.log("UPDATER", f"Install check failed: {type(e).__name__}: {e}")
@@ -267,7 +328,8 @@ class UpdateManager:
         """Prompt for the found update; install in place or open the release page."""
         import rumps
 
-        current = ".".join(map(str, self.current_version))
+        current = self.current_label
+        kind = "Development Build" if release.get("is_dev") else "Update"
 
         def prompt():
             if is_frozen() and release["asset_url"]:
@@ -275,7 +337,7 @@ class UpdateManager:
                     title=f"SwitchBored {release['tag']} Available",
                     message=(
                         f"You are running v{current}.\n\n"
-                        "Download and install the update now?\n"
+                        f"Download and install this {kind.lower()} now?\n"
                         "Your settings and plugins are kept, and the app "
                         "restarts when the update is applied."
                     ),
