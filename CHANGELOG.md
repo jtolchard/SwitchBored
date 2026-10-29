@@ -3,7 +3,22 @@
 All notable changes to SwitchBored are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and versions follow `MAJOR.MINOR.PATCH`.
+and versions follow `MAJOR.MINOR.PATCH`. Development builds (`-dev.N`)
+aren't listed separately; their changes appear under the release they
+lead up to.
+
+## [1.5.1] - 2026-10-29
+
+### Added
+- Settings → Advanced Features → "Include development builds in updates"
+  also offers preview builds of upcoming releases, published as GitHub
+  pre-releases tagged like `v1.5.2-dev.1`. It's off by default, so updates
+  otherwise only offer releases.
+
+### Fixed
+- SwitchBored no longer fails to start ("Launch error") on Apple-silicon
+  Macs where it was set to "Open using Rosetta". The app now always runs
+  natively, and that option no longer appears in Get Info.
 
 ## [1.5.0] - 2026-10-23
 
@@ -137,6 +152,7 @@ First public release.
   tab showing release notes.
 - Per-machine offline detection with ICMP ping and TCP fallback.
 
+[1.5.1]: https://github.com/jtolchard/SwitchBored/releases/tag/v1.5.1
 [1.5.0]: https://github.com/jtolchard/SwitchBored/releases/tag/v1.5.0
 [1.4]: https://github.com/jtolchard/SwitchBored/releases/tag/v1.4.0
 [1.3.2]: https://github.com/jtolchard/SwitchBored/releases/tag/v1.3.2
